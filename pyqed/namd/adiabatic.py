@@ -161,21 +161,21 @@ def tdm_surf(x,y, N=2):
 
 #     return nac
 
-def nonadiabatic_coupling(x, y, nstates):
-    """
-    nonadiabatic couplings among PPES
-    nstates: int
-        number of states
-    """
-    #d0 = nac_apes(x, y, nstates)
+# def nonadiabatic_coupling(x, y, nstates):
+#     """
+#     nonadiabatic couplings among PPES
+#     nstates: int
+#         number of states
+#     """
+#     #d0 = nac_apes(x, y, nstates)
 
-    nac_x = np.zeros((nx, ny, nstates, nstates))
-    nac_y = np.zeros((nx, ny, nstates, nstates))
+#     nac_x = np.zeros((nx, ny, nstates, nstates))
+#     nac_y = np.zeros((nx, ny, nstates, nstates))
 
-    nac_x[:,:,0,1] = 0.1 * np.exp(-X**2-Y**2)
-    nac_x[:,:,1,0] = - nac_x[:,:,0,1]
+#     nac_x[:,:,0,1] = 0.1 * np.exp(-X**2-Y**2)
+#     nac_x[:,:,1,0] = - nac_x[:,:,0,1]
 
-    return nac_x, nac_y
+#     return nac_x, nac_y
 
 # def hpsi(psi, kx, ky, vmat, coordinates='linear'):
 #     """
@@ -348,15 +348,7 @@ def hpsi_full(psi, kx, ky, vmat, nac_x, nac_y, coordinates='linear', \
             # tmp1 = np.array([dxpsi[k][i,j] for k in range(nstates)])
             # tmp2 = np.array([dypsi[k][i,j] for k in range(nstates)])
 
-
-
-
-
     # kinetic energy operator for linear coordinates
-
-
-
-
 
 
     # ... NAC_x * G11 * P_x + NAC_y * G22 * P_y + cross terms
