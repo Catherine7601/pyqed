@@ -44,15 +44,14 @@ import matplotlib.pyplot as plt
 
 from numba import jit
 from scipy.fftpack import fft2, ifft2, fftfreq
-import time
 
 # the scipy fft2 program has to be modified to match normal definitions
 # from numpy.linalg import inv, det
 
 
 from pyqed.phys import rk4, tdse, heaviside, get_index, dag, interval
-from pyqed.units import au2ev, au2fs
-# from lime.style import subplots
+from pyqed import au2ev, au2fs
+
 from pyqed.wpd import adiabatic_2d, KEO, PEO
 from pyqed.fft import dft2
 
@@ -1163,25 +1162,27 @@ def square_barrier(x, width, height):
     return height * (theta(x) - theta(x - width))
 
 
-def apes(x):
-    v = np.zeros((nx, nstates))
-    v[:, 0] = x**2/2.
-    v[:, 1] = x**2 + 2
 
-    return v
-
-def get_nac(x):
-    NAC = np.zeros((nx, nstates, nstates))
-    NAC[:, 0, 1] = np.exp(-x**2/2.)
-    NAC[:, 1, 0] = - NAC[:, 0 ,1]
-
-    return NAC
 
 ######################################################################
 
 if __name__ == '__main__':
 
     import time
+    
+    def apes(x):
+        v = np.zeros((nx, nstates))
+        v[:, 0] = x**2/2.
+        v[:, 1] = x**2 + 2
+
+        return v
+
+    def get_nac(x):
+        NAC = np.zeros((nx, nstates, nstates))
+        NAC[:, 0, 1] = np.exp(-x**2/2.)
+        NAC[:, 1, 0] = - NAC[:, 0 ,1]
+
+        return NAC
     
     start_time = time.time()
 
