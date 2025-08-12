@@ -28,7 +28,7 @@ nuclear_electron_attraction_integral
 from gbasis.integrals.electron_repulsion import electron_repulsion_integral
 
 
-from pyqed import dag
+from pyqed import dag, au2angstrom
 from pyqed.qchem.hf import RHF, UHF
 
 from periodictable import elements
@@ -833,7 +833,7 @@ def atom_mass_list(mol):
 
 
 class Molecule:
-    def __init__(self, atom, charge=0, spin=0, basis=None, **kwargs):
+    def __init__(self, atom=None, charge=0, spin=0, basis=None, unit='bohr', **kwargs):
 
         # mol = super(Molecule, self).__init__(atom=atom, **kwargs)
 
@@ -841,11 +841,19 @@ class Molecule:
 
         self._atom = format_atom(atom)
 
+
         # self.mol = mol
         # self.atom_coord = mol.atom_coord
 
         # print(self.atom_coords.shape)
         self.natom = len(self._atom)
+        
+        # TODO: add unit support. 
+        if unit in ['a', 'angstrom']:
+            raise ValueError('unit can only be Bohr.')
+            # for a in range(self.natom):
+            #     self._atom[a][1] = list(np.array(self._atom[a][1])/au2angstrom)
+                
         # self.mass = mol.atom_mass_list()
 
         self.spin = spin
@@ -863,6 +871,8 @@ class Molecule:
 
         self.nao = None
         self.nmo = None
+        self.unit = unit
+
 
 
     @property
@@ -907,7 +917,19 @@ class Molecule:
 
         build(self)
 
+    def topyscf(self):
+        """
+        change to Pyscf Mol object
 
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+
+        """
+        from pyscf import gto
+        return gto.M(atom=self.atom, basis=self.basis, unit=self.unit)
+    
     def atom_mass_list(self):
         '''
         A list of mass for all atoms in the molecule

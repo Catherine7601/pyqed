@@ -52,7 +52,10 @@ class ConservedSite(Site):
         self.qmax = qmax
 
         self.energy = None
-
+        
+        ###
+        self.H = None
+        self.e_tot = None
 
 
     # def __add__(self, other):
@@ -262,90 +265,7 @@ class ConservedSite(Site):
 
 
 
-class ElectronicSite(ConservedSite):
-    """A site for electronic models
 
-    You use this site for models where the single sites are electron
-    sites. The Hilbert space is ordered such as:
-
-    - the first state, labelled 0,  is the empty site,
-    - the second, labelled 1, is spin down,
-    - the third, labelled 2, is spin up, and
-    - the fourth, labelled 3, is double occupancy.
-
-    Notes
-    -----
-    Postcond: The site has already built-in the spin operators for:
-
-    - c_up : destroys an spin up electron,
-    - c_up_dag, creates an spin up electron,
-    - c_down, destroys an spin down electron,
-    - c_down_dag, creates an spin down electron,
-    - s_z, component z of spin,
-    - s_p, raises the component z of spin,
-    - s_m, lowers the component z of spin,
-    - n_up, number of electrons with spin up,
-    - n_down, number of electrons with spin down,
-    - n, number of electrons, i.e. n_up+n_down, and
-    - u, number of double occupancies, i.e. n_up*n_down.
-
-    """
-    def __init__(self):
-        super(ElectronicSite, self).__init__(4)
-        	# add the operators
-        self.add_operator("c_up")
-        self.add_operator("c_up_dag")
-        self.add_operator("c_down")
-        self.add_operator("c_down_dag")
-        self.add_operator("s_z")
-        self.add_operator("s_p")
-        self.add_operator("s_m")
-        self.add_operator("n_up")
-        self.add_operator("n_down")
-        self.add_operator("n")
-        self.add_operator("u")
-
-        	# for clarity
-        c_up = self.operators["c_up"]
-        c_up_dag = self.operators["c_up_dag"]
-        c_down = self.operators["c_down"]
-        c_down_dag = self.operators["c_down_dag"]
-        s_z = self.operators["s_z"]
-        s_p = self.operators["s_p"]
-        s_m = self.operators["s_m"]
-        n_up = self.operators["n_up"]
-        n_down = self.operators["n_down"]
-        n = self.operators["n"]
-        u = self.operators["u"]
-        	# set the matrix elements different from zero to the right values
-        	# TODO: missing s_p, s_m
-        c_up[0,2] = 1.0
-        c_up[1,3] = 1.0
-        c_up_dag[2,0] = 1.0
-        c_up_dag[3,1] = 1.0
-        c_down[0,1] = 1.0
-        c_down[2,3] = 1.0
-        c_down_dag[1,0] = 1.0
-        c_down_dag[3,2] = 1.0
-        s_z[1,1] = -1.0
-        s_z[2,2] = 1.0
-        n_up[2,2] = 1.0
-        n_up[3,3] = 1.0
-        n_down[1,1] = 1.0
-        n_down[3,3] = 1.0
-        n[1,1] = 1.0
-        n[2,2] = 1.0
-        n[3,3] = 2.0
-        u[3,3] = 1.0
-
-    def __add__(self):
-        # build the qn
-
-        # block the Hamiltonian
-        pass
-
-    def add_coupling(self):
-        pass
 
 
 
@@ -449,12 +369,12 @@ if __name__=='__main__':
     # H = model.jordan_wigner()
 
     model.run(10)
-    print('Exact = ', model.e_tot)
+    # print('Exact = ', model.e_tot)
 
-    h = model.H[np.ix_(idx, idx)]
+    # h = model.H[np.ix_(idx, idx)]
 
-    E, U = eigh(h, k=10)
-    print(E)
+    # E, U = eigh(h, k=10)
+    # print(E)
 
     ###
     # H = model.H
@@ -516,12 +436,12 @@ if __name__=='__main__':
     # print(qn, energy, degenaracy)
     # print(state_index)
 
-    def truncate_by_energy(e, u):
+    # def truncate_by_energy(e, u):
 
-        cutoff = -3.9
+    #     cutoff = -3.9
 
 
-        return TruncatedSite(qn, degeneracy, states, e)
+    #     return TruncatedSite(qn, degeneracy, states, e)
 
     def truncate_by_quantum_number():
         pass

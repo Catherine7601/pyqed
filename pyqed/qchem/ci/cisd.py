@@ -179,10 +179,47 @@ class CISD(CI):
     def run(self):
         pass
 
-    def vec_to_amplitudes(self, civec, copy=True):
+    def cisdvec_to_amplitudes(self, civec, nmo=None, nocc=None, copy=True):
+        """
+        extract the CI coefficients for each block (ground, singles, doubles)
 
-        nmo = self.nmo
-        nocc = self.nocc
+        The number of states considered in a CISD C.I. involving n doubly-occupied M.O.s and m empty M.O.s is:
+
+        No. of States = 1 + 2.n.m  + (n.m)2 + (n(n-1).m(m-1))/2
+
+        This represents:
+
+        Ground state
+        + (one α electron excited + one β electron excited)
+        + (one α electron and one β electron excited)
+        + (two α electrons excited + two β electrons excited)
+
+        The first term represents the ground state, the second term represents number of one-electron excitations, and the third and fourth terms represent the number of two-electron excitations.
+
+        Parameters
+        ----------
+        civec : TYPE
+            DESCRIPTION.
+        nmo : TYPE, optional
+            DESCRIPTION. The default is None.
+        nocc : TYPE, optional
+            DESCRIPTION. The default is None.
+        copy : TYPE, optional
+            DESCRIPTION. The default is True.
+
+        Returns
+        -------
+        c0 : TYPE
+            DESCRIPTION.
+        c1 : TYPE
+            DESCRIPTION.
+        c2 : TYPE
+            DESCRIPTION.
+
+        """
+
+        if nmo is None: nmo = self.nmo
+        if nocc is None: nocc = self.nocc
 
         nvir = nmo - nocc
         c0 = civec[0]
@@ -192,6 +229,84 @@ class CISD(CI):
 
         return c0, c1, c2
 
+    def make_rdm1(self):
+        return make_rdm1(self)
+
+
+def make_rdm1(myci, civec=None, nmo=None, nocc=None, ao_repr=False):
+    r'''
+    Spin-traced one-particle density matrix in MO basis (the occupied-virtual
+    blocks from the orbital response contribution are not included).
+
+    .. math::
+
+        D[p,q] = <q_\alpha^\dagger p_\alpha> + <q_\beta^\dagger p_\beta>
+
+    The convention of 1-pdm is based on McWeeney's book, Eq (5.4.20).
+    The contraction between 1-particle Hamiltonian and rdm1 is
+    E = einsum('pq,qp', h1, rdm1)
+
+    Refs:
+        PySCF
+
+    '''
+    if civec is None: civec = myci.ci
+    if nmo is None: nmo = myci.nmo
+    if nocc is None: nocc = myci.nocc
+
+    d1 = _gamma1_intermediates(myci, civec, nmo, nocc)
+    return _make_rdm1(myci, d1, with_frozen=True, ao_repr=ao_repr)
+
+def _gamma1_intermediates(myci, civec, nmo, nocc):
+    c0, c1, c2 = myci.cisdvec_to_amplitudes(civec, nmo, nocc, copy=False)
+    dvo = c0.conj() * c1.T
+    dvo += np.einsum('jb,ijab->ai', c1.conj(), c2) * 2
+    dvo -= np.einsum('jb,ijba->ai', c1.conj(), c2)
+    dov = dvo.T.conj()
+
+    theta = c2*2 - c2.transpose(0,1,3,2)
+    doo  = -np.einsum('ia,ka->ik', c1.conj(), c1)
+    doo -= contract('ijab,ikab->jk', c2.conj(), theta)
+    dvv  = np.einsum('ia,ic->ac', c1, c1.conj())
+    dvv += contract('ijab,ijac->bc', theta, c2.conj())
+    return doo, dov, dvo, dvv
+
+
+def _make_rdm1(mycc, d1, with_frozen=True, ao_repr=False, with_mf=True):
+    r'''dm1[p,q] = <q_alpha^\dagger p_alpha> + <q_beta^\dagger p_beta>
+
+    The convention of 1-pdm is based on McWeeney's book, Eq (5.4.20).
+    The contraction between 1-particle Hamiltonian and rdm1 is
+    E = einsum('pq,qp', h1, rdm1)
+
+    Refs:
+        pyscf/cc/ccsd_rdm.py
+    '''
+    doo, dov, dvo, dvv = d1
+    nocc, nvir = dov.shape
+    nmo = nocc + nvir
+    dm1 = np.empty((nmo,nmo), dtype=doo.dtype)
+    dm1[:nocc,:nocc] = doo + doo.conj().T
+    dm1[:nocc,nocc:] = dov + dvo.conj().T
+    dm1[nocc:,:nocc] = dm1[:nocc,nocc:].conj().T
+    dm1[nocc:,nocc:] = dvv + dvv.conj().T
+    if with_mf:
+        dm1[np.diag_indices(nocc)] += 2
+
+    if with_frozen and mycc.frozen is not None:
+        nmo = mycc.mo_occ.size
+        nocc = np.count_nonzero(mycc.mo_occ > 0)
+        rdm1 = np.zeros((nmo,nmo), dtype=dm1.dtype)
+        if with_mf:
+            rdm1[np.diag_indices(nocc)] = 2
+        moidx = np.where(mycc.get_frozen_mask())[0]
+        rdm1[moidx[:,None],moidx] = dm1
+        dm1 = rdm1
+
+    if ao_repr:
+        mo = mycc.mo_coeff
+        dm1 = contract('pi,ij,qj->pq', mo, dm1, mo.conj())
+    return dm1
 
 class UCISD(CI):
     """
@@ -260,7 +375,7 @@ class UCISD(CI):
 
         # nsd = 1 + 4*nocc * nvir + nocc*(2*nocc-1)*nvir*(2*nvir-1)
 
-        print('number of determinants', nsd)
+        print('number of CISD determinants', nsd)
 
         # # Given Λ(i occupied orbitals for each determinant) get B (binary rep.)"
         Binary = np.zeros((nsd, 2, nmo), dtype=np.int8)
@@ -294,7 +409,7 @@ class UCISD(CI):
 
         if isinstance(self.mf, (RHF,scf.rhf.RHF)):
             # for I in range(nsd):
-            Binary[:] = [mf.mo_occ//2, ] * 2
+            Binary[:] = [self.mf.mo_occ//2, ] * 2
         else:
             Binary[:] = mf.mo_occ
 
@@ -338,7 +453,7 @@ class UCISD(CI):
 
                         I += 2
 
-        # doubles with ab excitation
+        # doubles with ab -> ij excitation
         for i in range(nocc):
             for a in range(nocc, nmo):
                 for j in range(nocc):

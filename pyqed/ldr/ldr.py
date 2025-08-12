@@ -833,77 +833,77 @@ def gauss_hermite_quadrature(npts, xmax=None, x0=0.):
         k_max = None
         return x, w
 
-class GaussHermiteLDRN(LDRN):
+# class GaussHermiteLDRN(LDRN):
 
-    def __init__(self, x0, levels, ndim=3, nstates=2, mass=None):
+#     def __init__(self, x0, levels, ndim=3, nstates=2, mass=None):
 
-        assert(len(domains) == len(levels) == ndim)
+#         assert(len(domains) == len(levels) == ndim)
 
-        self.L = [domain[1] - domain[0] for domain in domains]
-
-
-        x = []
-        if dvr_type in ['sinc', 'sine']:
-
-            for d in range(ndim):
-                x.append(discretize(*domains[d], levels[d], endpoints=False))
-        # elif dvr_type == 'sine':
-        else:
-            raise ValueError('DVR {} is not supported. Please use sinc.')
+#         self.L = [domain[1] - domain[0] for domain in domains]
 
 
-        self.x = x
-        self.dx = [interval(_x) for _x in x]
-        self.nx = [len(_x) for _x in x]
+#         x = []
+#         if dvr_type in ['sinc', 'sine']:
 
-        self.dvr_type = dvr_type
-
-        if mass is None:
-            mass = [1, ] * ndim
-        self.mass = mass
-
-        self.nstates = nstates
-        self.ndim = ndim
-
-        # all configurations in a vector
-        self.points = np.fliplr(cartesian_product(x))
-        self.npts = len(self.points)
-
-        ###
-        self.H = None
-        self._K = None
-        # self._V = None
-
-        self._v = None
-        self.exp_K = None
-        self.exp_V = None
-        self.wf_overlap = self.A = None
-        self.apes = None
+#             for d in range(ndim):
+#                 x.append(discretize(*domains[d], levels[d], endpoints=False))
+#         # elif dvr_type == 'sine':
+#         else:
+#             raise ValueError('DVR {} is not supported. Please use sinc.')
 
 
+#         self.x = x
+#         self.dx = [interval(_x) for _x in x]
+#         self.nx = [len(_x) for _x in x]
 
-    def t(self, hc=1., mc2=1.):
-        """Return the kinetic energy matrix.
-        Usage:
-            T = self.t(V)
+#         self.dvr_type = dvr_type
 
-        @returns T kinetic energy matrix
-        """
-        _i = self.n[:, np.newaxis]
-        _j = self.n[np.newaxis, :]
-        _xi = self.x[:, np.newaxis]
-        _xj = self.x[np.newaxis, :]
+#         if mass is None:
+#             mass = [1, ] * ndim
+#         self.mass = mass
 
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            T = 2.*(-1.)**(_i-_j)/(_xi-_xj)**2.
+#         self.nstates = nstates
+#         self.ndim = ndim
 
-        T[self.n, self.n] = 0.
-        T += np.diag((2. * self.npts + 1.
-                      - np.square(self.x)) / 3.)
-        T *= self.gamma
-        T *= 0.5 * hc**2. / mc2   # (pc)^2 / (2 mc^2)
-        return T
+#         # all configurations in a vector
+#         self.points = np.fliplr(cartesian_product(x))
+#         self.npts = len(self.points)
+
+#         ###
+#         self.H = None
+#         self._K = None
+#         # self._V = None
+
+#         self._v = None
+#         self.exp_K = None
+#         self.exp_V = None
+#         self.wf_overlap = self.A = None
+#         self.apes = None
+
+
+
+#     def t(self, hc=1., mc2=1.):
+#         """Return the kinetic energy matrix.
+#         Usage:
+#             T = self.t(V)
+
+#         @returns T kinetic energy matrix
+#         """
+#         _i = self.n[:, np.newaxis]
+#         _j = self.n[np.newaxis, :]
+#         _xi = self.x[:, np.newaxis]
+#         _xj = self.x[np.newaxis, :]
+
+#         with warnings.catch_warnings():
+#             warnings.simplefilter("ignore")
+#             T = 2.*(-1.)**(_i-_j)/(_xi-_xj)**2.
+
+#         T[self.n, self.n] = 0.
+#         T += np.diag((2. * self.npts + 1.
+#                       - np.square(self.x)) / 3.)
+#         T *= self.gamma
+#         T *= 0.5 * hc**2. / mc2   # (pc)^2 / (2 mc^2)
+#         return T
 
 # class LDRN:
 #     """
@@ -1488,7 +1488,7 @@ class LDR2(WPD2):
         # K = self.buildK().reshape((N, N))
 
         # overlap of electronic states
-        A = np.zeros((nx, ny, nx, ny, nstates, nstates), dtype=dtype)
+        A = np.zeros((nx, ny, nx, ny, nstates, nstates), dtype=complex)
         # self._K = np.zeros((N, N, M, M), dtype=dtype)
 
 
@@ -2774,11 +2774,11 @@ class SincDVR_PBC(SincDVR2):
 
 
 if __name__ == '__main__':
-    
+
     ##################
-    # nonabelian model 
+    # nonabelian model
     ##################
-    
+
     # from pyqed.models.pyrazine import DHO
     from pyqed import sigmaz, interval, sigmax, norm, gwp
     from pyqed.models.pyrazine import Pyrazine

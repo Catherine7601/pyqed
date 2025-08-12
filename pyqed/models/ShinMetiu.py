@@ -950,8 +950,10 @@ class ShinMetiu2InElectricField(ShinMetiu2):
         # dipole self-energy
         DSE = 0
         
+        # kinetic energy operator + light-matter interaction
         self.hcore = T + kron(X, idy) * Ex + kron(idx, Y) * Ey + DSE 
         # self.hcore = T + kron(Px, idy) * Ex + kron(idx, Py) * Ey
+        
         return 
         
     def single_point(self, R):
@@ -1033,8 +1035,9 @@ class ShinMetiu2InElectricField(ShinMetiu2):
 
 
 
+# def discretized_loop()
 
-def circle(center=(0,0), radius=1, npts=10):
+def loop(center=(0,0), radius=1, npts=10):
     """
     generate a discretized loop
 
@@ -1101,8 +1104,6 @@ if __name__=='__main__':
     
     mol = ShinMetiu2InElectricField()
 
-    
-    
     mol.create_grid(5, domain=[[-6, 6], [-6, 6]])
 
     F = np.linspace(0, 1, 10)

@@ -156,18 +156,33 @@ class RHF:
         C = self.mo_coeff
         return dag(C) @ self.mol.hcore @ C
 
-    def get_eri_mo(self):
+    def get_eri_mo(self, mo_coeff=None, notation='chem'):
         """
-        get electron repulsion integrals in CMOs
+        get electron repulsion integrals in MOs
 
+        Parameters
+        ----------
+        mo_coeff: MO coefficients. If None, use canonical MOs. 
+        
+        notation: Default: chem. 
+        
         Returns
         -------
         eri_mo : TYPE
             DESCRIPTION.
 
         """
-        C = self.mo_coeff
-        eri_mo = contract('ijkl, ip, jq, kr, ls -> pqrs', self.eri, C.conj(), C, C.conj(), C)
+        if mo_coeff is None: 
+            C = self.mo_coeff 
+        else: 
+            C = mo_coeff
+        
+        if notation == 'chem':
+            eri_mo = contract('ijkl, ip, jq, kr, ls -> pqrs', self.eri, C.conj(), C, C.conj(), C)
+        
+        elif notation == 'phys':
+            eri_mo = contract('ijkl, ip, jq, kr, ls -> prqs', self.eri, C.conj(), C, C.conj(), C)
+        
         return eri_mo
 
     def to_uhf(self):
@@ -183,6 +198,27 @@ class RHF:
 
     def energy_nuc(self):
         return self.e_nuc
+    
+    def eri_asymm(self):
+        """
+        antisymmetrized electron-repulsion integral in physicists' notation
+        
+        .. math::
+            
+            \langle ij||kl \rangle =  \langle ij | kl \rangle - \langle ij | lk \rangle
+        
+        Parameters
+        ----------
+        notation : TYPE, optional
+            DESCRIPTION. The default is 'phys'.
+
+        Returns
+        -------
+        None.
+
+        """
+        eri = self.get_eri_mo(notation='phys')
+        return eri - np.transpose(eri, (0,1,3,2))
 
 
 # def get_hcore(mol):
