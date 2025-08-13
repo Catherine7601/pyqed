@@ -175,7 +175,7 @@ def build_atom_from_coords(atom_symbol_list, coords):
 
 
 
-def format_atom(atoms):
+def format_atom(atoms, unit='b', origin=0, axes=None):
     # '''Convert the input :attr:`Mole.atom` to the internal data format.
     # Including, changing the nuclear charge to atom symbol, converting the
     # coordinates to AU, rotate and shift the molecule.
@@ -245,10 +245,12 @@ def format_atom(atoms):
                 fmt_atoms.append(dat)
 
 
-        # if len(fmt_atoms[0].split()) < 4:
-        #     fmt_atoms = from_zmatrix('\n'.join(fmt_atoms))
-        # else:
-        fmt_atoms = [str2atm(line) for line in fmt_atoms]
+        if len(fmt_atoms[0].split()) < 4:
+            # fmt_atoms = from_zmatrix('\n'.join(fmt_atoms))
+            # TODO: add zmat supporter 
+            raise ValueError('Zmat not supported yet.')            
+        else:
+            fmt_atoms = [str2atm(line) for line in fmt_atoms]
 
     else:
         fmt_atoms = []
@@ -262,12 +264,26 @@ def format_atom(atoms):
                 else:
                     fmt_atoms.append([(atom[0]), atom[1]])
 
+    if axes is None:
+        axes = np.eye(3)
+    
+    if is_au(unit):
+        unit = 1
+    else:
+        unit = 1/au2angstrom
+        
     c = numpy.array([a[1] for a in fmt_atoms], dtype=numpy.double)
-    # c = numpy.einsum('ix,kx->ki', axes * unit, c - origin)
+    c = numpy.einsum('ix,kx->ki', axes * unit, c - origin)
     z = [a[0] for a in fmt_atoms]
 
     return list(zip(z, c.tolist()))
 
+
+
+def is_au(unit):
+    '''Return whether the unit is recognized as A.U. or not
+    '''
+    return unit.upper().startswith(('B', 'AU'))
 
 # def fromfile(filename, format=None):
 #     '''Read molecular geometry from a file
@@ -833,20 +849,31 @@ def atom_mass_list(mol):
 
 
 class Molecule:
-    def __init__(self, atom=None, charge=0, spin=0, basis=None, unit='bohr', **kwargs):
+    def __init__(self, atom, charge=0, spin=0, basis=None, unit='bohr', **kwargs):
 
         # mol = super(Molecule, self).__init__(atom=atom, **kwargs)
 
         # mol = gto.M(atom, **kwargs)
+        
+        # if isinstance(atom, str):
+        #     # The input atom is a geometry file
+        #     if os.path.isfile(self.atom):
+        #         try:
+        #             self.atom = fromfile(atom)
+        #         except ValueError:
+        #             sys.stderr.write('\nFailed to parse geometry file  %s\n\n' % atom)
+        #             raise
+        # else:
+        
+        self.atom = format_atom(atom)
+        self.natom = len(self.atom)
 
-        self._atom = format_atom(atom)
 
 
         # self.mol = mol
         # self.atom_coord = mol.atom_coord
 
         # print(self.atom_coords.shape)
-        self.natom = len(self._atom)
         
         # TODO: add unit support. 
         if unit in ['a', 'angstrom']:
@@ -858,7 +885,10 @@ class Molecule:
 
         self.spin = spin
         self.charge = charge
-
+        
+        self.atom = atom
+        self.natom = None 
+        
         self.distmat = None
         self.basis = basis
         self._nelec = None
@@ -875,13 +905,13 @@ class Molecule:
 
 
 
-    @property
-    def atom(self):
-        return self._atom
+    # @property
+    # def atom(self):
+    #     return self._atom
 
-    @atom.setter
-    def atom(self, atm):
-        self._atom = atm
+    # @atom.setter
+    # def atom(self, atm):
+    #     self._atom = atm
 
 
     def atom_coord(self, a):
@@ -915,6 +945,7 @@ class Molecule:
 
         """
 
+        
         build(self)
 
     def topyscf(self):

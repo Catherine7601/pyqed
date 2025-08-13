@@ -17,6 +17,7 @@ class UHF:
         pass
 
 
+
 def energy_elec(mf, dm=None, h1e=None, vhf=None):
     '''Electronic energy of Unrestricted Hartree-Fock
 
