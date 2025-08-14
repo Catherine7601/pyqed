@@ -18,12 +18,12 @@ import numba
 import sys
 import math
 import tqdm
-from pyqed import au2k
+from pyqed import au2k, au2angstrom, au2wavenumber
 from opt_einsum import contract
 
 
-bohr_angstrom = 0.52917721092
-hartree_wavenumber = 219474.63
+# bohr_angstrom = 0.52917721092
+# hartree_wavenumber = 219474.63
 
 #hartree_wavenumber = scipy.constants.value(u'hartree-inverse meter relationship') / 1e2
 
@@ -271,16 +271,16 @@ class Ehrenfest:
         Ehrenfest dynamics for model Hamiltonians
 
         .. math::
-            
+
             i \dot{c}_i(t) = \sum_{j = 0}^{N-1} (E_i \delta_{ij} - i d_{ij} v_i ) c_j
-            
+
             \dot{P} = F/M
-            
+
             \dot{X} = P
 
-        where i,j labels the electronic states, X, P are respectively, the nuclear coordinate and 
-        momentum. 
-        
+        where i,j labels the electronic states, X, P are respectively, the nuclear coordinate and
+        momentum.
+
         Parameters
         ----------
         ndim : TYPE
@@ -308,10 +308,10 @@ class Ehrenfest:
         # self.grid     = pes_grid
         self.ndim     = ndim  #
 
-        self.model = model 
-        
-    
-        
+        self.model = model
+
+
+
         # electronic coeffs, positions, momenta
         # self.c  = np.zeros((ntraj, nstates), dtype=np.complex128)
         # self.y  = np.zeros((ntraj, len(pes_grid)))
@@ -371,9 +371,9 @@ class Ehrenfest:
             x = x / np.sqrt(2.0 * ax) + x0
 
             p = np.zeros((self.ntraj, self.ndim))
-        
+
         # initial electronic state
-        c = np.zeros((self.ntraj, self.nstates))
+        c = np.zeros((self.ntraj, self.nstates), dtype=complex)
         c[:, init_state] = 1
 
         return x, p, c
@@ -438,57 +438,59 @@ class Ehrenfest:
     def _rhs_c(self, c, v, energy, nac):
         """
         .. math::
-            
+
             dC/dt = -i \mathbf{H}_\text{eff}  C,
-        
+
             H_eff[i,i] = E_i,   H_eff[j,i] = - i (v · d_{ji})
         """
-        
+
         # energies = self._get_energies(x)
-        
+
         # d = self._get_nacs(yk)
         # nst = self.nstates
-        
+
         H = np.diag(energy) - 1j * contract('a, ija', v, nac)
-        
+
         # for i in range(nst):
         #     H_eff[i,i] = energies[i]
         #     for j in range(nst):
         #         if j!=i:
         #             coupling = np.dot(vk, d[j,i])
         #             H_eff[j,i] = -1j * coupling
-                    
+
         return -1j * H @ c
 
     def mean_field_force(self, x, c, energy=None, grad=None, nac=None, return_electronic_data=False):
 
         """
-        Mean field force 
+        Mean field force
         .. math::
-            
+
             F_\text{MF} = -\sum_j |c_j|^2 \partial_\alpha E_j
                          + \sum_{i, j} c_i^* c_j (E_i - E_j) d_{ji}
-        
-        
+
+
         Refs
             J. Chem. Phys. 150, 204124 (2019)
         """
-        if energy is None:
-            energy, grad = self.model.adiabatic_energy(x)
-        
-        if nac is None:
-            nac = self.model.nac(x)
-    
+        # if energy is None:
+        #     energy, grad = self.model.adiabatic_energy(x)
+
+        # if nac is None:
+        #     nac = self.model.nac(x)
+            
+        energy,grad, nac = self.model.nonadiabatic_coupling(x)
+
         # diagonal part
         F_diag = - contract('a, ai -> i', np.abs(c)**2, grad)
         dE  = energy[:, None] - energy[None, :]
         F_non = contract('i, j, ij, ija -> a', c.conj(), c, dE, nac)
         F = F_diag + F_non
-        
+
         if return_electronic_data:
-            return F, energy, grad, nac
+            return np.real(F), energy, grad, nac
         else:
-            return F
+            return np.real(F)
 
         # # version 1 in the loop
         # F = np.zeros(ndim)
@@ -504,22 +506,22 @@ class Ehrenfest:
         #             F -= coeff * d[j,i]
         # return F
 
-    def run(self, dt=0.01, nt=3000, method='RK4', force_driver=None, nac_driver=None):
+    def run(self, dt=0.01, nt=3000, method='euler', force_driver=None, nac_driver=None):
         """
         using velocity verlet method to propagate the nuclei
-        
+
         .. math::
-            
-            X(t + \Delta t) = P(t+ dt/2) * dt 
-            
+
+            X(t + \Delta t) = P(t+ dt/2) * dt
+
         """
 
         mass = self.mass
 
         x, p, c = self.sample(init_state=1)
-        
+
         force = self.mean_field_force
-        
+
         p_old = p.copy()
 
         for step in range(nt):
@@ -530,7 +532,7 @@ class Ehrenfest:
 
 
                 F, energy, _, nac = force(x[k], c[k], return_electronic_data=True)
-                
+
                 p[k] += 0.5 * dt * F
 
                 # full-step position
@@ -543,9 +545,9 @@ class Ehrenfest:
                 vk = p_old[k]/mass
 
                 if method=='RK4':
-                    
+
                     from pyqed import rk4
-                    
+
                     c[k] = rk4(c, self._rhs_c, dt, x[k], vk)
                     # ck0 = self.c[k].copy()
                     # k1 = self._rhs_c(ck0,           x[k], vk)
@@ -554,32 +556,34 @@ class Ehrenfest:
                     # k4 = self._rhs_c(ck0+ dt*k3, x[k], vk)
                     # self.c[k] += (k1+2*k2+2*k3+k4)/6*dt
                 elif method == 'euler':
-                    
+
                     c[k] += dt * self._rhs_c(c[k], vk, energy, nac)
-            
+
             p_old = p
 
         return x, p, c
 
     def population(self, c):
         pass
-    
+
     def xAve(self, x):
         pass
-    
+
     def total_energy(self):
         pass
 
 
+class GeometricEhrenfest(Ehrenfest):
+    pass
 
 class CoupledOscillatorModel:
     """
     Two-state, two-dimensional coupled harmonic oscillator:
 
     .. math::
-        
+
         H = 1/2 \omega_1 x^2 + 1/2 \omega_2 y^2  + 1/2 g x y
-    
+
     Diabatic Hamiltonian H(R) = [[H_11, H_12],[H_12, H_22]].
     """
     def __init__(self, omega1, omega2, g, x):
@@ -588,7 +592,12 @@ class CoupledOscillatorModel:
         self.g       = g
         self.nstates = 2
         self.ndim    = 1
-        self.x = 1 # fixed at x=1 
+        self.x = 1 # fixed at x=1
+        
+        
+        self.E = None
+        self.U = None
+        
 
     def H_diab(self, R):
         """
@@ -610,14 +619,14 @@ class CoupledOscillatorModel:
         y = float(R[0] if hasattr(R, '__len__') else R)
         E1 = 0.5 * self.omega1*x*x
         E2 = 0.5 * self.omega2 * y**2
-        V12 = 0.5 * self.g * y *x
+        V12 = 0.5 * self.g * y * x
         return np.array([[E1, V12], [V12, E2]], dtype=float)
-    
+
         # return np.array([
         #     [0.5*self.omega1*x*x,  0.5*self.g*x*y],
         #     [0.5*self.g*x*y,       0.5*self.omega2*y*y]
         # ], dtype=float)
-    
+
     # def pes(self, y_grid):
     #     """
     #     For each y in y_grid, construct the harmonic oscillator Hamiltonian
@@ -631,51 +640,28 @@ class CoupledOscillatorModel:
     #         n = np.arange(self.nstates)
     #         energies[i, :] = omega1 * np.sqrt(1 ) * (n + 0.5)+0.5*omega2 * y[
     #             i]**2 -(0.125 *g**2 *y[i]**2)/(omega1 )
-                
-        
+
+
     #     self.energies = energies
     #     self.interpolators = [RegularGridInterpolator((y_grid,), energies[:, i]) for i in range(self.nstates)]
-            
+
     #     return energies
 
     def adiabatic_energy(self, R, return_grad=True):
-       
+
         H = self.H_diab(R)
         E, U = np.linalg.eigh(H)
-        
-        self._E = E
-        self._U = U
-        
+
+        self.E = E
+        self.U = U
+
         if return_grad:
             grad = self.dH(R)
-            
+
             return E, grad
         else:
             return E, U
 
-    def grad_and_nac(self, R):
-        
-        H = self.H_diab(R)
-        eps, U = np.linalg.eigh(H)
-        
-
-        grad = self.dH(R)
-        
-        n, dim = self.nstates, self.ndim
-        d = np.zeros((n,n,dim), dtype=float)
-
-        for a in range(dim):
-            # print("a",a)
-            M = dH_list[a]
-            for i in range(n):
-                for j in range(n):
-                    if i != j:
-                        num = U[:,i].conj() @ (M @ U[:,j])
-                        den = eps[j] - eps[i]
-                        d[i,j,a] = num/den
-                        
-        return eps, grad, d 
-    
     def dH(self, R):
         """
         retrun dH/dx, dH/dy two matrix
@@ -700,29 +686,48 @@ class CoupledOscillatorModel:
         Calculate NAC matrix
 
         .. math::
-            
-            d_{ij}^\alpha = <\\phi_i | \partial_\alpha H | \\phi_j> / (E_j - E_i)  
-        
-        for i \ne j, \alpha is the nuclear degrees of freedom. 
 
-        return (nstates,nstates,ndim) 
+            d_{ij}^\alpha = <\\phi_i | \partial_\alpha H | \\phi_j> / (E_j - E_i)
+
+        for i \ne j, \alpha is the nuclear degrees of freedom.
+
+        return (nstates,nstates,ndim)
         """
-        eps, U = self.adiabatic_energy(R, return_grad=False)
-        dH_list = self.dH(R)
-        n, dim = self.nstates, self.ndim
-        d = np.zeros((n,n,dim), dtype=float)
+        # eps, U = self.adiabatic_energy(R, return_grad=False)
+        # if self.E is not None:
+        #     E, U = self.E, self.U 
+        # else:
+        E, U = self.adiabatic_energy(R, return_grad=False)
+            
+        
+        dH = np.array(self.dH(R))
+        
+        # n, dim = self.nstates, self.ndim
+        
+        d = np.zeros((self.nstates, self.nstates, self.ndim), dtype=float)
 
-        for a in range(dim):
-            # print("a",a)
-            M = dH_list[a]
-            for i in range(n):
-                for j in range(n):
-                    if i != j:
-                        num = U[:,i].conj() @ (M @ U[:,j])
-                        den = eps[j] - eps[i]
-                        d[i,j,a] = num/den
-        return d
-    
+        # for a in range(self.ndim):
+        #     M = dH_list[a]
+        #     for i in range(self.nstates):
+        #         for j in range(self.nstates):
+        #             if i != j:
+        #                 num = U[:,i].conj() @ M @ U[:,j]
+        #                 de = E[j] - E[i]
+        #                 d[i,j,a] = num/de
+        
+        num = contract('ui, auv, vj -> ija', U.conj(), dH, U)
+        
+        with np.errstate(divide='ignore'):
+            de_inv = 1/np.subtract.outer(E, E)
+        
+        print(de_inv)
+            
+        de_inv = np.nan_to_num(de_inv, nan=0, posinf=0, neginf=0)
+
+        d = -contract('ija, ij -> ija',  num, de_inv)
+        
+        return E, d
+
 
 
     # def gradients(self, R):
@@ -744,59 +749,55 @@ class CoupledOscillatorModel:
 
 
 class AbInitioEhrenfest(Ehrenfest):
-    def __init__(self, mol, ntraj, nstates):
+    def __init__(self, mol, ntraj, nstates, model=None):
 
         self.mol = mol
         self.natom = mol.natom
         self.ntraj = ntraj
         self.nstates = nstates
 
+        self.model = model
 
-    def force(self, x):
-        natom = self.natom
-
-        x.reshape(natom, 3)
-
-    def run(self, dt, nt, driver='tddft'):
-
-        mass = self.mass
-
-        x, p, c = self.sample()
+        ###
+        self.mols = None # list of Molecule objects
+        self.configurations = None
 
 
-        # for step in range(self.Nt):
-        for step in tqdm(range(nt),desc="processing"):
+    def mean_field_force(self, x, c):
+        """
 
-            # half-step momentum
-            for k in range(self.ntraj):
 
-                # print("k",k,"yk",self.y[k])
-                F = force(x[k], c[k])
-                p[k] += 0.5* dt * F
+        Parameters
+        ----------
+        x : TYPE
+            DESCRIPTION.
+        c : TYPE
+            DESCRIPTION.
 
-            # full-step position
-            x += dt * p / mass
+        Returns
+        -------
+        None.
 
-            # half-step momentum
-            for k in range(self.ntraj):
+        """
+        # natom = self.natom
 
-                F = force(x[k], c[k])
-                p[k] += 0.5 * dt * F
 
-            # electronic propagation
-            for k in range(self.ntraj):
+        # mol.energy()
+        # mol.nac()
 
-                vk = p[k]/mass
+        # atom_coords = x.reshape(natom, 3)
+        # energy = scanner(atom_coords)
+        pass
 
-                if method=='RK4':
-                    ck0 = self.c[k].copy()
-                    k1 = self._rhs_c(ck0,           x[k], vk)
-                    k2 = self._rhs_c(ck0+0.5* dt*k1, x[k], vk)
-                    k3 = self._rhs_c(ck0+0.5* dt*k2, x[k], vk)
-                    k4 = self._rhs_c(ck0+ dt*k3, x[k], vk)
-                    self.c[k] += (k1+2*k2+2*k3+k4)/6*dt
-                else:
-                    self.c[k] += dt * self._rhs_c(c[k], x[k], vk)
+    # def run(self, dt, nt, driver='tddft'):
+
+    #     mass = self.mass
+
+    #     x, p, c = self.sample()
+
+    #     for mol in self.mols:
+
+
 
 
 
@@ -819,30 +820,45 @@ if __name__ == '__main__':
     # set up the model Hamiltonian
     omega1=3.0
     omega2=1.0
-    g=0.8
-    mass_nuc = 1/ omega2  # in atomic units, 1/omega2 is the mass of the low-energy oscillator
-
-    # E_kin_au= 0.1
-    ntraj = 10  # number of trajectories
-    dt = 0.1
-    nt = 10 
+    g= 0.8
     
+    mass_nuc = 1/ omega2  # in atomic units, 1/omega2 is the mass of the low-energy oscillator
+    # E_kin_au= 0.1
     sigma = np.sqrt(1.0/(2 *  mass_nuc * omega2))
     width = 1.0 / sigma**2
     print("Initial width:", width)
-
-
+    
+    nstates = 2
     model = CoupledOscillatorModel(omega1=omega1, omega2=omega2, g=g, x=1) #
+
+    Rs = np.linspace(-6, 6)
+    nac = np.zeros(len(Rs))
+    e = np.zeros((len(Rs), nstates))
     
+    for i, R in enumerate(Rs):
+        E, d = model.nac(R)
+        
+        e[i] = E 
+        nac[i] = d[0, 1, 0]
+        
+    import ultraplot as plt
+    fig, ax = plt.subplots()
+    ax.plot(Rs, nac)
     
+    fig, ax = plt.subplots()
+    ax.plot(Rs, e[:,0])
+    ax.plot(Rs, e[:,1])
+    
+
     #######################
-    ### Ehrenfest dynamics 
+    ### Ehrenfest dynamics
     #######################
-    ehrenfest   = Ehrenfest(ntraj=ntraj, ndim = 1, mass=mass_nuc, # x is quantum , y is classical , dimension is 1
+    ehrenfest = Ehrenfest(ntraj=10, ndim = 1, mass=mass_nuc, # x is quantum , y is classical , dimension is 1
                              nstates=2, model=model)
-    
+
     # ehrenfest.sample(initial_state=1)
-    
+    dt = 0.1
+    nt = 10
     y_steps, py_steps, c_steps = ehrenfest.run(dt=dt, nt = nt, method='euler')
 
 
@@ -852,79 +868,79 @@ if __name__ == '__main__':
     # # initialization
     # # for nuclear DOF  : an ensemble of trajectories
     # # for electronic DOF  : for each trajectory associate a complex vector c of dimension M
-    
+
     # ntraj = Ntraj = 10
     # M = nstates = 2
     # #nfit = 5
     # #ax = 1.0 # width of the GH basis
     # ay0 = 16.0
     # y0 = 0.1
-    
+
     # # initial conditions for c
     # c = np.zeros((Ntraj,M),dtype=np.complex128)
-    
+
     # # mixture of ground and first excited state
-    
+
     # c[:,0] = 1.0/np.sqrt(2.0)+0j
     # c[:,1] = 1.0/np.sqrt(2.0)+0j
     # #for i in range(2,M):
     # #    c[:,i] = 0.0+0.0j
-    
+
     # # coherent state
     # #z = 1.0/np.sqrt(2.0) * x0 * np.sqrt(ax)
     # #for i in range(M):
     # #    c[:,i] = np.exp(-0.5 * np.abs(z)**2) * z**i / np.sqrt(math.factorial(i))
-    
+
     # print('initial occupation \n',c[0,:])
     # print('trace of density matrix',np.vdot(c[0,:], c[0,:]))
     # # ---------------------------------
     # # initial conditions for nuclear trajectory
-    
+
     # # ensemble of trajectories
     # y = np.random.randn(ntraj)
     # y = y / np.sqrt(2.0 * ay0) + y0
     # print('trajectory range {}, {}'.format(min(y),max(y)))
-    
+
     # print('intial nuclear position',y)
     # py = np.zeros(Ntraj)
     # # ry = - ay0 * (y-y0)
-    
+
     # w = np.array([1./Ntraj]*Ntraj)
-    
+
     # # -------------------------------
-    
+
     # amx = 1.0
     # amy = 1836.15
-    
+
     # f_MSE = open('rMSE.out','w')
     # nout = 1       # number of trajectories to print
     # fmt =  ' {}' * (nout+1)  + '\n'
     # #Eu = 0.
-    
+
     # Ndim = 1           # dimensionality of the nuclei
     # fric_cons = 0.0      # friction constant
-    
-    
+
+
     # Nt = 20000
     # dt = 0.002
     # dt2 = dt/2.0
     # t = 0.0
-    
+
     # print('time range for propagation is [0,{}]'.format(Nt*dt))
     # print('timestep  = {}'.format(dt))
-    
+
     # # construct the Hamiltonian matrix for anharmonic oscilator
     # #g = 0.0
     # #V = 0.5 * M2mat(ax,M) + g* M4mat(ax,M)
     # #K = Kmat(ax,0.0,M)
     # #H = K+V
-    
+
     # #print('Hamiltonian matrix in DOF x = \n')
     # #print(H)
     # #print('\n')
-    
+
     # #eps = 0.5 # nonlinear coupling Vint = eps*x**2*y**2
-    
+
     # # @numba.autojit
     # def den(c,w):
     #     """
@@ -935,24 +951,24 @@ if __name__ == '__main__':
     #         for i in range(M):
     #             for j in range(M):
     #                 rho[i,j] += c[k,i] * np.conjugate(c[k,j]) * w[k]
-    
+
     #     rho2 = np.dot(rho,rho)
-    
+
     #     purity = 0.0+0.0j
     #     for i in range(M):
     #         purity += rho2[i,i]
-    
+
     #     return rho[0,1], purity.real
-    
+
     # # @numba.autojit
     # def norm(c,w):
-    
+
     #     anm = 0.0
-    
+
     #     for k in range(Ntraj):
     #         anm += np.vdot(c[k,:], c[k,:]).real * w[k]
     #     return anm
-    
+
     # # # @numba.autojit
     # # def fit_c(c,y):
     # #     """
@@ -960,9 +976,9 @@ if __name__ == '__main__':
     # #     """
     # #     dc = np.zeros((Ntraj,M),dtype=np.complex128)
     # #     ddc = np.zeros((Ntraj,M),dtype=np.complex128)
-    
+
     # #     for j in range(M):
-    
+
     # #         z = c[:,j]
     # #         pars = np.polyfit(y,z,nfit)
     # #         p0 = np.poly1d(pars)
@@ -971,128 +987,128 @@ if __name__ == '__main__':
     # # #for k in range(Ntraj):
     # #         dc[:,j] = p1(y)
     # #         ddc[:,j] = p2(y)
-    
+
     # #     return dc, ddc
-    
+
     # # @numba.autojit
     # def prop_c(y):
-    
+
     #     # dc, ddc = fit_c(c,y)
-    
+
     #     dcdt = np.zeros([ntraj,M],dtype=np.complex128)
-    
-    
+
+
     #     #X1 = M1mat(ax,M)
     #     for k in range(ntraj):
-    
+
     #         H = np.zeros((nstates, nstates))
     #         H[0,0] = ground(y[k])[0]
     #         H[0,1] = H[1,0] = 0.0
     #         H[1,1] = excited(y[k])[0]
-    
+
     #         # anharmonic term in the bath potential
     #         #Va = y[k]**4 * 1.0
-    
+
     #         tmp = H.dot(c[k,:])
-    
+
     #         dcdt[k,:] = -1j * tmp
-    
+
     #     return dcdt
-    
+
     # # @numba.autojit
     # def xAve(c,y,w):
     #     """
     #     compute expectation value of x
     #     """
     #     Xmat = M1mat(ax,M)
-    
+
     #     x_ave = 0.0+0.0j
     #     for k in range(Ntraj):
     #         for m in range(M):
     #             for n in range(M):
     #                 x_ave += Xmat[m,n] * np.conjugate(c[k,m]) * c[k,n] * w[k]
-    
+
     #     return x_ave.real
-    
+
     # # propagate the QTs for y
-    
-    
+
+
     # # update the coeffcients for each trajectory
     # fmt_c = ' {} '* (M+1)
-    
+
     # f = open('traj.dat','w')
     # fe = open('en.out','w')
     # fc = open('c.dat','w')
     # fx = open('xAve.dat','w')
     # fnorm = open('norm.dat', 'w')
     # fden = open('den.dat','w')
-    
-    
+
+
     # v0, dv = mean_field_force(y,c)
-    
+
     # cold = c
     # dcdt = prop_c(y)
     # c = c + dcdt * dt
-    
+
     # for k in range(Nt):
-    
+
     #     t = t + dt
-    
+
     #     py += - dv * dt2
-    
+
     #     y +=  py*dt/amy
-    
+
     #     # force field
-    
+
     #     # x_ave = xAve(c,y,w)
     #     v0, dv = mean_field_force(y,c)
-    
+
     #     py += - dv * dt2
-    
+
     #     # renormalization
-    
+
     #     #anm = norm(c,w)
     #     #c /= np.sqrt(anm)
-    
+
     #     # update c
-    
+
     #     dcdt = prop_c(y)
     #     cnew = cold + dcdt * dt * 2.0
     #     cold = c
     #     c = cnew
-    
-    
+
+
     #     #  output data for each timestep
     # #    d = c
     # #    for k in range(Ntraj):
     # #        for i in range(M):
     # #            d[k,i] = np.exp(-1j*t*H[i,i])*c[k,i]
-    
-    
+
+
     #     # fx.write('{} {} \n'.format(t,x_ave))
-    
+
     #     f.write(fmt.format(t,*y[0:nout]))
-    
+
     #     #fnorm.write(' {} {} \n'.format(t,anm))
-    
+
     #     # output density matrix elements
     #     # rho, purity = den(c,w)
     #     # fden.write(' {} {} {} \n'.format(t,rho, purity))
-    
+
     #     Ek = np.dot(py*py,w)/2./amy
     #     Ev = np.dot(v0,w)
-    
+
     #     Etot = Ek + Ev
-    
+
     #     fe.write('{} {} {} {} \n'.format(t,Ek,Ev,Etot))
-    
-    
+
+
     # print('The total energy = {} Hartree. \n'.format(Etot))
-    
+
     # # print trajectory and coefficients
     # for k in range(Ntraj):
     #     fc.write( '{} {} {} \n'.format(y[k], c[k,0],c[k,-1]))
-    
+
     # fe.close()
     # f.close()
     # fc.close()
