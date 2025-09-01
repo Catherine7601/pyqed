@@ -6,7 +6,7 @@ Created on Mon Aug 11 09:04:09 2025
 @author: Bing Gu (gubing@westlake.edu.cn)
 """
 
-from pyqed.qchem import UCISD, Molecule
+from pyqed.qchem import UCISD, Molecule, FCI
 
 mol = Molecule(atom = [
     ['O', ( 0., 0.    , 0.   )],
@@ -17,6 +17,11 @@ mol.basis = 'sto3g'
 mol.build()
 
 mf = mol.RHF().run()
+
+fci = FCI(mf).run()
+
+
+####
 myci = UCISD(mf)
 myci.run()
 

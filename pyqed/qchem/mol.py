@@ -865,8 +865,8 @@ class Molecule:
         #             raise
         # else:
         
-        self.atom = format_atom(atom)
-        self.natom = len(self.atom)
+        self._atom = format_atom(atom)
+        self.natom = len(self._atom)
 
 
 
@@ -876,8 +876,12 @@ class Molecule:
         # print(self.atom_coords.shape)
         
         # TODO: add unit support. 
-        if unit in ['a', 'angstrom']:
-            raise ValueError('unit can only be Bohr.')
+        # if unit.lower() in ['b', 'bohr']:
+        #     for a in range(self.natom):
+        #         self._atom[a][1] = list(np.array(self._atom[a][1]))
+        
+        # elif unit in ['a', 'angstrom']:
+        #     raise ValueError('unit can only be Bohr.')
             # for a in range(self.natom):
             #     self._atom[a][1] = list(np.array(self._atom[a][1])/au2angstrom)
                 
@@ -887,7 +891,6 @@ class Molecule:
         self.charge = charge
         
         self.atom = atom
-        self.natom = None 
         
         self.distmat = None
         self.basis = basis
