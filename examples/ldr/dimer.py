@@ -9,10 +9,14 @@ Created on Mon Sep 29 13:32:14 2025
 # if __name__ == "__main__":
 import numpy as np
 from pyqed import Molecule
+from pyqed.ldr.ldr import LDRN
 from pyqed.qchem.ci import CASCI
 from pyqed.qchem.ci.casci import overlap
 
 import copy
+
+from pyqed.units import amu2au
+
 
 
 # mol = Molecule(atom = [
@@ -28,54 +32,54 @@ import copy
 # print(mol.atom_coords())
 
 nstates = 3
-Rs = np.linspace(2.8, 2.82, 2)
-E = np.zeros((nstates, len(Rs)))
+ldr = LDRN([[2, 10]], levels=[2], ndim=1, nstates=nstates)
 
-R = Rs[0]
+x = ldr.x[0] # bond length
+nx = ldr.nx[0]
+
+print(x)
+
 
 atom = [
-    ['Na' , (0. , 0. , 0)],
-    ['F' , (0. , 0. , R)]]
+    ['Li' , (0. , 0. , 0)],
+    ['F' , (0. , 0. , x[0])]]
 
 mol = Molecule(atom, basis='631g')
 mol.molecular_frame()
-
 mol.build()
 
-# S = overlap(casci_old, casci)
 
-print(mol.atom_coords())
+m1, m2 = mol.atom_mass_list() * amu2au
+mass = m1 * m2/(m1+m2)
+print(mass)
 
 mf = mol.RHF()
 mf.run()
 
 dm = mf.make_rdm1()
 
-ncas, nelecas = (4,2)
+ncas, nelecas = (2,2)
 casci = CASCI(mf, ncas, nelecas)
 
 casci.run(nstates)
 
+
+E = np.zeros((nstates, nx))
+L = np.zeros((nx-1, nstates, nstates))
+
 E[:,0] = casci.e_tot
+casci_old = copy.copy(casci)
 
-casci_old = copy.deepcopy(casci)
 
-# S = overlap(casci, casci)
-# print(S)
+for i in range(1, nx):
 
-for i in range(1, len(Rs)):
-
-    R = Rs[i]
+    R = x[i]
     print('bond length = ', R)
 
-    atom = [
-        ['Na' , (0. , 0. , 0)],
-        ['F' , (0. , 0. , R)]]
+    coord = [[0. , 0. , 0], [0. , 0. , R]]
 
-    mol = Molecule(atom, basis='631g')
-
+    mol.set_geom(coord)
     mol.molecular_frame()
-
     mol.build()
 
     print(mol.atom_coords())
@@ -90,25 +94,23 @@ for i in range(1, len(Rs)):
 
     casci.run(nstates)
 
-    # print(casci.binary)
-
     E[:,i] = casci.e_tot
 
+    L[i-1] = overlap(casci_old, casci)
 
-    S = overlap(casci_old, casci)
+    print(L[i-1])
 
-    print(S)
-
-    casci_old = copy.deepcopy(casci)
+    casci_old = copy.copy(casci)
 
 
-# np.savez('energy', E)
 
-# import ultraplot as plt
+np.savez('energy', E)
 
-# fig, ax = plt.subplots()
-# for n in range(nstates):
-#     ax.plot(Rs, E[n])
+import ultraplot as plt
+
+fig, ax = plt.subplots()
+for n in range(nstates):
+    ax.plot(x, E[n])
 
 #### test overlap
 # mol2 = Molecule(atom = [

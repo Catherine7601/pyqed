@@ -388,8 +388,9 @@ class LDRN:
         self.ndim = ndim
 
         # all configurations in a vector
-        self.points = np.fliplr(cartesian_product(x))
-        self.ntot = len(self.points)
+        # self.points = np.fliplr(cartesian_product(x))
+        self.points = cartesian_product(x)
+        self.ntot = self.npts = len(self.points)
 
         ###
         self.H = None
@@ -414,8 +415,11 @@ class LDRN:
     def v(self, v):
         assert(v.shape == (*self.nx, self.nstates, self.nstates))
 
-        if abs(np.min(v)) > 0.1:
-            raise ValueError('The PES minimum is not 0. Shift the PES.')
+        # if abs(np.min(v)) > 0.1:
+        #     raise ValueError('The PES minimum is not 0. Shift the PES.')
+
+        # shift the energy so that the ground state energy minimum is 0
+        v = v - np.nanmin(v[:, :, 0])
 
         self._v = v
 

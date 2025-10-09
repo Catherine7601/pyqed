@@ -40,7 +40,7 @@ from numpy import cos, pi, sqrt
 
 from scipy import linalg
 from scipy.sparse import kron
-import matplotlib.pyplot as plt
+
 
 from numba import jit
 from scipy.fftpack import fft2, ifft2, fftfreq
@@ -49,7 +49,7 @@ from scipy.fftpack import fft2, ifft2, fftfreq
 # from numpy.linalg import inv, det
 
 
-from pyqed.phys import rk4, tdse, heaviside, get_index, dag, interval
+from pyqed.phys import rk4, tdse, heaviside, get_index, dag, interval, dagger
 from pyqed import au2ev, au2fs
 
 from pyqed.wpd import adiabatic_2d, KEO, PEO
@@ -276,8 +276,8 @@ def hpsi_full(psi, kx, ky, vmat, nac_x, nac_y, coordinates='linear', \
     # if nstates != len(vmat):
     #     sys.exit('Error: number of electronic states does not match the length of PPES matrix!')
 
-    nx, ny, nstates = psi.shape 
-    
+    nx, ny, nstates = psi.shape
+
     vpsi = np.einsum('ijn, ijn -> ijn', vmat, psi)
 
     #vpsi = [vmat[i] * psi[i] for i in range(nstates)]
@@ -496,18 +496,18 @@ class BornHuang2:
         None.
 
         """
-        self.x = x 
-        self.y = y 
+        self.x = x
+        self.y = y
         self.nx = len(x)
         self.ny = len(y)
-        
-        self.mass = mass 
-        
+
+        self.mass = mass
+
         self.v = None # APES
-        self.nac = None 
-    
+        self.nac = None
+
     def set_apes(self, v):
-        
+
         if isinstance(v, np.ndarray):
             assert(v.shape == (self.nx, self.ny, self.nstates))
             self.v = v
@@ -516,69 +516,69 @@ class BornHuang2:
             self.v = v(X, Y)
         else:
             raise TypeError('v can only be array or function.')
-        
-        
+
+
     def run(self, psi0, dt, nt=1, t0=0):
         """
-    
+
         :param dt: time step
-    
+
         :param psi0: 3D array, (nx, ny, nstates)
                     the initial state
-    
+
         :param num_steps: the number of the time steps
                        num_steps=0 indicates that no propagation has been done,
                        only the initial state and the initial purity would be
                        the output
         :return: psi_end: list
                           the final state
-    
+
                  purity: float array
                           purity values at each time point
         """
         #f = open('density_matrix.dat', 'w')
         t = t0
-    
+
         # setup the dipole surface
         # dip_mat = dipole(X, Y)
-    
+
         # nac = nonadiabatic_couplings(X, Y, nstates)
-    
-        v = self.v 
-        x, y = self.x, self.y 
+
+        v = self.v
+        x, y = self.x, self.y
         nx, ny = self.nx, self.ny
-        
-        nac_x, nac_y = self.nac 
-        
+
+        nac_x, nac_y = self.nac
+
         mass = self.mass
-        
+
         dx = interval(x)
         dy = interval(y)
-        
+
         kx = 2.0 * np.pi * scipy.fftpack.fftfreq(nx, dx)
         ky = 2.0 * np.pi * scipy.fftpack.fftfreq(ny, dy)
 
         print('Propagation starts ...\n')
-        
+
         psi = psi0
-    
+
         for i in range(nt):
-    
+
             t += dt
             psi = rk4(psi, hpsi_full, dt, kx, ky, v, nac_x, nac_y, mass)
             #output_tmp = density_matrix(psi)
-    
+
             # for obs_op in obs_ops:
             #     tmp = obs(psi, )
-    
+
             #f.write('{} {} {} {} {} \n'.format(t, *rho))
             #purity[i] = output_tmp
-    
+
         return psi
 
     def population(self):
-        pass 
-    
+        pass
+
 
 ######################################################################
 # Helper functions for gaussian wave-packets
@@ -787,8 +787,8 @@ def hpsi(psi, kx, ky, v, G):
 # print(spo_dynamics(0.01, v_list, psigrid, num_steps=2)[1])
 
 
-class NAMD:
-    def __init__(self, x, nstates, mass, v, nac):
+class BornHuang:
+    def __init__(self, x, nstates, v=None, nac=None, mass=1):
         """
         Non-adiabatic molecular dynamics (NAMD) simulations for one nuclear dof
             and many electronic states.
@@ -815,7 +815,9 @@ class NAMD:
         self.V_x = v
         self.v = v
         self.nstates = nstates
-        self.nac = nac 
+        self.nac = nac
+
+        self.psilist = []
 
     def x_evolve(self, psi, vpsi):
         """
@@ -925,7 +927,7 @@ class NAMD:
 
         return psi_x
 
-    def evolve(self, psi0, dt=0.001, Nt=1,  t0=0., nout=1, coordinates='linear'):
+    def run(self, psi0, dt=0.001, nt=1,  t0=0., nout=1, coordinates='linear'):
         """
         Propagate the wavepacket dynamics
 
@@ -955,47 +957,49 @@ class NAMD:
             DESCRIPTION.
 
         """
-        
+
         psi = psi0
         t = t0
-        x = self.x         
-        
+        x = self.x
+
         nx = len(x)
         dx = x[1] - x[0]
-        
-        vmat = self.v 
-        nac = self.nac 
-        
-        # momentum k-space 
+
+        vmat = self.v
+        nac = self.nac
+        mass = self.mass
+
+        # momentum k-space
         k = 2.0 * np.pi * scipy.fftpack.fftfreq(nx, dx)
-        
+
         if coordinates == 'linear':
             print('The nuclear coordinate is linear.')
-        
+
         elif coordinates == 'curvilinear':
-            
+
             raise NotImplementedError('Kinetic energy operator for curvilinear\
                                       coordinates has not been implemented.')
-        
-        fig, ax = plt.subplots()
-        
-        for j in range(Nt//nout):
+
+
+
+        for j in range(nt//nout):
             for i in range(nout):
-              
+
                 t += dt
-                psi = rk4(psi, hpsi, dt, x, k, vmat, nac)
+                psi = rk4(psi, hpsi, dt, x, k, vmat, nac, mass)
                 #output_tmp = density_matrix(psi)
-        
+
                 #f.write('{} {} {} {} {} \n'.format(t, *rho))
                 #purity[i] = output_tmp
-            
-            
+
+            self.psilist.append(psi.copy())
+
             # ax.plot(x, np.abs(psi[:,0]) + 0.1 * j)
-            ax.plot(x, np.abs(psi[:,1]))
-            
-        return psi 
-    
-    
+
+
+        return self
+
+
 def density_matrix(psi_x,dx):
     """
     compute purity from the wavefunction
@@ -1005,13 +1009,13 @@ def density_matrix(psi_x,dx):
     rho11 = 1. - rho00
     return rho00, rho01, rho01.conj(), rho11
 
-def hpsi(psi, x, k, vmat, nac, coordinates='linear', use_nac2=False):
+def hpsi(psi, x, k, vmat, nac, mass=1, coordinates='linear', use_nac2=False):
     """
     evaluate H \psi
     input:
         v: 1d array, adiabatic surfaces
         d: nonadiabatic couplings, matrix
-        use_nac2: bool 
+        use_nac2: bool
             indicator whether to include the second-order nonadiabatic couplings
     output:
         hpsi: H operators on psi
@@ -1053,12 +1057,12 @@ def hpsi(psi, x, k, vmat, nac, coordinates='linear', use_nac2=False):
     #         tpsi[:,a] = ifft( k*k/2./mx * psi_k[:, a])
 
     # elif coordinates == 'curvilinear':
-        
+
     #     raise NotImplementedError('Kinetic energy operator for the curvilinear\
     #                               coordinates has not been implemented.')
     for a in range(nstates):
-        tpsi[:,a] = ifft( k*k/2./mx * psi_k[:, a])
-            
+        tpsi[:,a] = ifft( k*k/2./mass * psi_k[:, a])
+
     #     G = np.identity(2)
 
     #     for i in range(nx):
@@ -1072,7 +1076,7 @@ def hpsi(psi, x, k, vmat, nac, coordinates='linear', use_nac2=False):
 
     # NACs operate on the WF
 
-    nacpsi = -np.einsum('imn, in -> im', nac, dpsi)/mx  # array with size nstates
+    nacpsi = -np.einsum('imn, in -> im', nac, dpsi)/mass  # array with size nstates
 
     hpsi = tpsi + vpsi + nacpsi
 
@@ -1161,11 +1165,11 @@ def square_barrier(x, width, height):
 if __name__ == '__main__':
 
     import time
-    
+
     def apes(x):
         v = np.zeros((nx, nstates))
         v[:, 0] = x**2/2.
-        v[:, 1] = x**2 + 2
+        v[:, 1] = (x-1)**2 + 2
 
         return v
 
@@ -1175,57 +1179,52 @@ if __name__ == '__main__':
         NAC[:, 1, 0] = - NAC[:, 0 ,1]
 
         return NAC
-    
+
     start_time = time.time()
 
     nstates = 2 # number of electronic states
-    
-    mx = 1.0 # mass
-    
+
     dt = 0.001
-    
+
     # setup the grid
     nx = 128
     x = np.linspace(-8, 8, nx)
     dx = x[1] - x[0]
-    
+
 
     vmat = apes(x) # list of APESs
-    
+
     # setup the nonadiabatic couplings
     nac = get_nac(x)
-    
+
     # kx = 2.0 * np.pi * scipy.fftpack.fftfreq(nx, dx)
-    
+
     # set initial state
     psi = np.zeros((nx, nstates), dtype=complex)
-    psi[:, 0] = gwp(x, a=1.0, x0=1.0, k0=2.0)
-        
+    psi[:, 0] = gwp(x, a=1.0, x0=0.0, k0=2.0)
+
     print('Propagation starts ...\n')
     # fig, ax = plt.subplots()
-    
+
     # for j in range(Nt//nout):
     #     for i in range(nout):
     #         t += dt
     #         psi = rk4(psi, hpsi, dt, x, kx, vmat, nac)
     #         #output_tmp = density_matrix(psi)
-    
+
     #         #f.write('{} {} {} {} {} \n'.format(t, *rho))
     #         #purity[i] = output_tmp
-    
+
     #     ax.plot(x, np.abs(psi[:,0]) + 0.1 * j)
     #     ax.plot(x, psi[:,1].real)
 
-    sol = NAMD(x, nstates=nstates, mass=mx, v=vmat, nac=nac)
-    sol.evolve(psi0=psi, dt=dt, Nt=4000, nout=1000)
+    sol = BornHuang(x, nstates=nstates, mass=1.0, v=vmat, nac=nac)
+    sol.run(psi0=psi, dt=dt, nt=4000, nout=1000)
+
+    import matplotlib.pyplot as plt
+
+    fig, ax = plt.subplots()
+    for psi in sol.psilist:
+        ax.plot(x, np.abs(psi[:,1]))
 
     print('Execution Time = {} s'.format(time.time() - start_time))
-
-
-
-
-
-
-
-
-

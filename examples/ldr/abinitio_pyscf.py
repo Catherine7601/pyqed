@@ -3,7 +3,7 @@
 """
 Created on Mon Jan  8 14:57:08 2024
 
-ab initio LDR
+PySCF interface with ab initio LDR
 
 @author: Yujuan, Bing
 """
@@ -773,6 +773,8 @@ if __name__=='__main__':
     nx, ny = ldr.nx
     npts = ldr.npts
 
+    print(ldr.nx)
+
     # psi0 = initialize_wavepacket(ref_geom=ref_geom, idx0=32, idx1=10, a=30, A=overlap_matrix, target_state=1) # x[idx0], y[idx1]是波包初始位置的中心点
 
 
@@ -799,12 +801,7 @@ if __name__=='__main__':
     driver = QChemDriver(mol, nstates=nstates, method='cisd')
     # apes = mol.scan_pes()
 
-
-
-    # quantum chemistry
-
     v = np.zeros((npts, nstates))
-
     ci_list = []
 
     for i in range(npts):
@@ -826,13 +823,11 @@ if __name__=='__main__':
 
     lpa = LPA(ci_list, dims=ldr.nx, nstates=nstates)
 
-    links = lpa.link()
+    link = lpa.link()
 
     A = lpa.approximate_overlap()
 
   #psi0 = ldr.initialize_wavepacket(ref_geom=ref_geom, idx0=0, idx1=0, a=10, A=overlap_matrix, target_state=1)
-
-
 
     # load electronic structure data into the quantum dynamics solver
 

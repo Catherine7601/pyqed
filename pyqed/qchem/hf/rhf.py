@@ -713,7 +713,7 @@ def hartree_fock(mol, dm0=None, init_guess='hcore', max_cycle=50, tol=1e-8):
 
 
 if __name__ == '__main__':
-    from pyscf import gto, scf
+    # from pyscf import gto, scf
     # mol = gto.M(atom='H 0 0 0; H 0 0 1.1', unit='b', basis='631g')
     # conv, e, mo_e, mo, mo_occ = scf.hf.kernel(scf.hf.SCF(mol), dm0=np.eye(mol.nao_nr()))
     # print('conv = %s, E(HF) = %.12f' % (conv, e))

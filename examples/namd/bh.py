@@ -6,7 +6,7 @@ Created on Tue Aug 12 09:13:59 2025
 @author: Bing Gu (gubing@westlake.edu.cn)
 """
 
-from pyqed.namd.adiabatic import BH2
+from pyqed.namd import BornHuang2
 import numpy as np
 import time
 
@@ -15,7 +15,7 @@ ndim = 2
 nstates = 2 # total number of electronic states
  # setup the initial wavefunction
 
-psi0 = ... 
+psi0 = ...
 
 
 # idx = np.unravel_index(np.argmin(np.abs(s0)), s0.shape)
@@ -107,7 +107,7 @@ nt = 100
 start_time = time.time()
 
 
-bh = BH2(x, y)
+bh = BornHuang2(x, y)
 
 bh.run(psi0, dt=dt, nt=nt)
 

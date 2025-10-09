@@ -314,7 +314,7 @@ class CASCI:
         return H
 
 
-    def run(self, nstates=1, method='ci'):
+    def run(self, nstates=1, method='ci', ci0=None):
         """
         solve the full CI in the active space
 
@@ -441,6 +441,10 @@ def overlap(cibra, ciket, s=None):
 
     The MO overlap is a block matrix
 
+    for Restricted calculation only! (spin unpolarized.)
+
+    TODO: unrestricted HF.
+
     S = [S_CC, S_CA]
         [S_AC, S_AA]
 
@@ -480,32 +484,66 @@ def overlap(cibra, ciket, s=None):
 
     nsd_bra = cibra.binary.shape[0]
     nsd_ket = ciket.binary.shape[0]
-    S = np.zeros((nsd_bra, nsd_ket))
+    S = np.zeros((nsd_bra, nsd_ket)) # overlap between determinants
 
     ncore_bra = cibra.ncore
     ncore_ket = ciket.ncore
-    core_bra = list(range(cibra.ncore))
-    core_ket = list(range(ciket.ncore))
 
+    scc = s[:ncore_bra, :ncore_ket]
+    sca = s[:ncore_bra, ncore_ket:]
+    sac = s[ncore_bra:, :ncore_ket]
+    saa = s[ncore_bra:, ncore_ket:]
 
+    scc_det = np.linalg.det(scc)
+    scc_inv = np.linalg.inv(scc)
 
     for I in range(nsd_bra):
-        occidx1_a  = core_bra + [i + ncore_bra for i, char in enumerate(cibra.binary[I, 0]) if char == 1]
-        occidx1_b  = core_bra + [i + ncore_bra for i, char in enumerate(cibra.binary[I, 1]) if char == 1]
-
-        print('a', occidx1_a, occidx1_b)
+        occidx1_a  = [i for i, char in enumerate(cibra.binary[I, 0]) if char == 1]
+        occidx1_b  = [i for i, char in enumerate(cibra.binary[I, 1]) if char == 1]
 
         for J in range(nsd_ket):
-            occidx2_a  = core_ket + [i + ncore_ket for i, char in enumerate(ciket.binary[J, 0]) if char == 1]
-            occidx2_b  = core_ket + [i + ncore_ket for i, char in enumerate(ciket.binary[J, 1]) if char == 1]
+            occidx2_a  =  [i for i, char in enumerate(ciket.binary[J, 0]) if char == 1]
+            occidx2_b  =  [i for i, char in enumerate(ciket.binary[J, 1]) if char == 1]
 
             # print('b', occidx2_a, occidx2_b)
             # print(ciket.binary[J])
 
     # TODO: the overlap matrix can be efficiently computed for CAS factoring out the core-electron overlap.
+            saa_occ_a = saa[np.ix_(occidx1_a, occidx2_a)]
+            sca_occ_a = sca[:, occidx2_a]
+            sac_occ_a = sac[occidx1_a, :]
 
-            S[I, J] = np.linalg.det(s[np.ix_(occidx1_a, occidx2_a)]) * \
-                      np.linalg.det(s[np.ix_(occidx1_b, occidx2_b)])
+            saa_occ_b = saa[np.ix_(occidx1_b, occidx2_b)]
+            sca_occ_b = sca[:, occidx2_b]
+            sac_occ_b = sac[occidx1_b, :]
+
+
+            S[I, J] = scc_det**2 * np.linalg.det(saa_occ_a - sac_occ_a @ scc_inv @ sca_occ_a)*\
+                np.linalg.det(saa_occ_b - sac_occ_b @ scc_inv @ sca_occ_b)
+
+
+
+    # core_bra = list(range(cibra.ncore))
+    # core_ket = list(range(ciket.ncore))
+
+
+
+
+    # for I in range(nsd_bra):
+    #     occidx1_a  = core_bra + [i + ncore_bra for i, char in enumerate(cibra.binary[I, 0]) if char == 1]
+    #     occidx1_b  = core_bra + [i + ncore_bra for i, char in enumerate(cibra.binary[I, 1]) if char == 1]
+
+    #     for J in range(nsd_ket):
+    #         occidx2_a  = core_ket + [i + ncore_ket for i, char in enumerate(ciket.binary[J, 0]) if char == 1]
+    #         occidx2_b  = core_ket + [i + ncore_ket for i, char in enumerate(ciket.binary[J, 1]) if char == 1]
+
+    #         # print('b', occidx2_a, occidx2_b)
+    #         # print(ciket.binary[J])
+
+    # # TODO: the overlap matrix can be efficiently computed for CAS factoring out the core-electron overlap.
+
+    #         S[I, J] = np.linalg.det(s[np.ix_(occidx1_a, occidx2_a)]) * \
+    #                   np.linalg.det(s[np.ix_(occidx1_b, occidx2_b)])
 
 
     return contract('IB, IJ, JA', cibra.ci.conj(), S, ciket.ci)
@@ -513,8 +551,6 @@ def overlap(cibra, ciket, s=None):
 if __name__ == "__main__":
     from pyqed import Molecule
     from pyqed.qchem.ci.cisd import overlap
-
-
 
 
     mol = Molecule(atom = [
@@ -525,8 +561,6 @@ if __name__ == "__main__":
     mol.charge = 0
 
     mol.molecular_frame()
-
-
     print(mol.atom_coords())
 
     nstates = 3

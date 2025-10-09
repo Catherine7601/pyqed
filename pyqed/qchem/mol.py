@@ -247,8 +247,8 @@ def format_atom(atoms, unit='b', origin=0, axes=None):
 
         if len(fmt_atoms[0].split()) < 4:
             # fmt_atoms = from_zmatrix('\n'.join(fmt_atoms))
-            # TODO: add zmat supporter 
-            raise ValueError('Zmat not supported yet.')            
+            # TODO: add zmat supporter
+            raise ValueError('Zmat not supported yet.')
         else:
             fmt_atoms = [str2atm(line) for line in fmt_atoms]
 
@@ -266,12 +266,12 @@ def format_atom(atoms, unit='b', origin=0, axes=None):
 
     if axes is None:
         axes = np.eye(3)
-    
+
     if is_au(unit):
         unit = 1
     else:
         unit = 1/au2angstrom
-        
+
     c = numpy.array([a[1] for a in fmt_atoms], dtype=numpy.double)
     c = numpy.einsum('ix,kx->ki', axes * unit, c - origin)
     z = [a[0] for a in fmt_atoms]
@@ -855,7 +855,7 @@ class Molecule:
         # mol = super(Molecule, self).__init__(atom=atom, **kwargs)
 
         # mol = gto.M(atom, **kwargs)
-        
+
         # if isinstance(atom, str):
         #     # The input atom is a geometry file
         #     if os.path.isfile(self.atom):
@@ -865,7 +865,7 @@ class Molecule:
         #             sys.stderr.write('\nFailed to parse geometry file  %s\n\n' % atom)
         #             raise
         # else:
-        
+
         self._atom = format_atom(atom)
         self.natom = len(self._atom)
 
@@ -875,24 +875,24 @@ class Molecule:
         # self.atom_coord = mol.atom_coord
 
         # print(self.atom_coords.shape)
-        
-        # TODO: add unit support. 
+
+        # TODO: add unit support.
         # if unit.lower() in ['b', 'bohr']:
         #     for a in range(self.natom):
         #         self._atom[a][1] = list(np.array(self._atom[a][1]))
-        
+
         # elif unit in ['a', 'angstrom']:
         #     raise ValueError('unit can only be Bohr.')
             # for a in range(self.natom):
             #     self._atom[a][1] = list(np.array(self._atom[a][1])/au2angstrom)
-                
+
         # self.mass = mol.atom_mass_list()
 
         self.spin = spin
         self.charge = charge
-        
+
         self.atom = atom
-        
+
         self.distmat = None
         self.basis = basis
         self._nelec = None
@@ -949,7 +949,7 @@ class Molecule:
 
         """
 
-        
+
         build(self)
 
     def topyscf(self):
@@ -964,7 +964,7 @@ class Molecule:
         """
         from pyscf import gto
         return gto.M(atom=self.atom, basis=self.basis, unit=self.unit)
-    
+
     def atom_mass_list(self):
         '''
         A list of mass for all atoms in the molecule
@@ -1000,14 +1000,21 @@ class Molecule:
         # transfrom to molecular frame
 
         R0 = self.center_of_mass()
-                
-        for i in range(self.natom):        
-            R = np.array(self._atom[i][1]) 
-            R -= R0 
-            
-            self._atom[i][1] = list(R) 
-            
-        
+
+        for i in range(self.natom):
+            R = np.array(self._atom[i][1])
+            R -= R0
+
+            self._atom[i][1] = list(R)
+
+
+        return self
+
+    def set_geom(self, R):
+        # update coordinates
+        for i in range(self.natom):
+            self._atom[i][1] = R[i]
+
         return self
 
     def eckart_frame(self, ref):
@@ -1673,7 +1680,7 @@ if __name__ == '__main__':
     # import proplot as plt
 
     from pyqed import Molecule
-    
+
     # mol = gto.Mole()
     # mol.verbose = 3
     atom = [['H' , (0,      0., 0.)],
@@ -1681,11 +1688,11 @@ if __name__ == '__main__':
             ['H', (1.5, 0, 0)]]
     #mol.basis = {'Ne': '6-31G'}
     mol = Molecule(atom)
-    
+
     d = mol._build_distance_matrix()
-    
+
     print(d)
-    
+
     # This is from G2/97 i.e. MP2/6-31G*
     # mol.atom = [['H' , (0,      0., 0.)],
     #             ['H', (1.1, 0., 0.)]]
