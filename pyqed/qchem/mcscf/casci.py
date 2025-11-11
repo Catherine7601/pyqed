@@ -624,7 +624,7 @@ class CASCI:
     def overlap(self, other):
         return overlap(self, other)
 
-    def make_tdm1(self, bra_id, ket_id=0, h1e=None, representation='ao'):
+    def contract_with_tdm1(self, bra_id, ket_id=0, h1e=None, representation='mo'):
         """
         spin-traced 1e transition density matrix
 
@@ -672,7 +672,40 @@ class CASCI:
             c_cas = make_tdm1(self.ci[bra_id], self.ci[ket_id], self.binary, self.SC1, h1e)
 
         return c_cas + c_core
+    
+    def make_tdm1(self, bra_id, ket_id=0):
+        """
+        TDM 
 
+        Parameters
+        ----------
+        bra_id : TYPE
+            DESCRIPTION.
+        ket_id : TYPE, optional
+            DESCRIPTION. The default is 0.
+
+        Returns
+        -------
+        None.
+
+        """
+        cibra = self.ci[bra_id]
+        ciket = self.ci[ket_id]
+        
+        return make_tdm1(cibra, ciket, self.binary, self.SC1)
+
+    def make_tdm2(self, bra_id, ket_id=0):
+        """
+        spin-traced 1e transition density matrix in MO
+
+        .. math::
+
+            \gamma_{pq}^{\beta \alpha} = <\Psi_\beta | \hat{E}_{qp} | \Psi_\alpha >
+
+        E_{qp} = q_alpha^\dagger p_alpha + q_beta^\dagger p_beta
+        """
+        raise NotImplementedError('TDM not implemented')
+        
 
 
 
@@ -711,7 +744,7 @@ def spin_square(dm1, dm2):
 
     return spin_square
 
-def make_tdm1(cibra, ciket, binary, SC1, h1e):
+def contract_with_tdm1(cibra, ciket, binary, SC1, h1e):
     """
 
     1e transition DM contracted with 1e operators
@@ -852,6 +885,58 @@ def make_rdm1(ci, binary, SC1):
 
 
     return np.einsum('I, IJpq, J -> pq', ci.conj(), H, ci)
+
+def make_tdm1(cibra, ciket, binary, SC1):
+    """
+
+    make spin-traced 1e TDM E_{pq}
+
+    .. math::
+
+        \braket{I|\hat{E}_{pq}|J}
+
+    Parameters
+    ----------
+    ci : TYPE
+        DESCRIPTION.
+    h1e : TYPE, optional
+        One electron operator in MO. The default is None.
+
+    Returns
+    -------
+    D : TYPE
+        DESCRIPTION.
+
+    SC1 (1-body Slater-Condon Rules)
+    SC2 (2-body Slater-Condon Rules)
+
+    Return
+    ======
+    HCI: CI Hamiltonian
+    """
+
+
+    I_A, J_A, a_t , a, I_B, J_B, b_t , b, ca, cb = SC1
+
+
+    # sum of MO energies
+    # H = np.einsum("ISp -> Ip", binary, optimize=True)
+    # H = binary[:, 0, :] + binary[:, 1, :]
+
+    # H = np.diag(H)
+
+    nsd, _, nmo = binary.shape
+    H = np.zeros((nsd, nsd, nmo, nmo))
+    for I in range(nsd):
+        for p in range(nmo):
+            H[I, I, p, p] = sum(binary[I, :, p])
+
+    ## Rule 1
+    H[I_A, J_A] -= np.einsum("Kp, Kq -> Kpq", a_t, a, optimize=True)
+    H[I_B, J_B] -= np.einsum("Kp, Kq -> Kpq", b_t, b, optimize=True)
+
+
+    return np.einsum('I, IJpq, J -> pq', cibra.conj(), H, ciket)
 
 
 

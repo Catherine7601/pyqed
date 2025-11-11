@@ -154,7 +154,7 @@ class RHF1D:
     """
     restricited DVR-HF method in 1D for soft Columb potential
     """
-    def __init__(self, mol, init_guess='hcore', dvr_type = 'sine', domain=None, nx=None): # nelec, spin):
+    def __init__(self, mol, init_guess='hcore'): # nelec, spin):
         # self.spin = spin
         self.nelec = mol.nelec
         self.mol = mol
@@ -169,16 +169,17 @@ class RHF1D:
         self.init_guess = init_guess
 
         ### dvr setup
-        self.x = None
-        self.nx = nx
-        self.domain = domain
-        self.dvr_type = dvr_type
+        self.x = mol.x
+        self.nx = self.nao = self.nmo = mol.nx
+        
+        self.domain = mol.domain
+        self.dvr_type = mol.dvr_type
 
         self.mo_occ = None
         self.mo_coeff = None
         self.e_tot = None
 
-        self.e_nuc = mol.energy_nuc()
+        self.e_nuc = mol.nuclear_repulsion()
 
         self.e_kin = None
         self.e_ne = None
@@ -245,9 +246,10 @@ class RHF1D:
 
         return get_veff(self.eri, dm)
 
+
     def get_hcore(self):
         """
-        single point calculations
+        build the DVR basis sets and 1e and 2e integrals
 
         Parameters
         ----------
@@ -268,36 +270,36 @@ class RHF1D:
 
         """
 
-        # H(r; R)
-
 
         nx = self.nx
+        x = self.x
         # T
         # origin method of calculate kinetic term
 
-        if self.dvr_type == 'sine':
-            dvr = SineDVR(*self.domain, nx)
-        else:
-            raise ValueError('DVR {} is not supported yet, use sine.'.format(self.dvr_type))
+        # if self.dvr_type == 'sine':
+        #     dvr = SineDVR(*self.domain, nx)
+        # else:
+        #     raise ValueError('DVR {} is not supported yet, use sine.'.format(self.dvr_type))
 
 
-        x = dvr.x
-        self.x = x
+        # x = dvr.x
+        # self.x = x
 
 
         # tx = kinetic(self.x, dvr=self.dvr_type)
-        T = dvr.t()
+        # T = dvr.t()
 
-        self.T = T
+        self.T = self.mol.T
 
         # V_en
         # Ra = self.left
         # Rb = self.right
-        v = np.zeros((nx))
-        for i in range(nx):
-            r1 = np.array(x[i])
+        # v = np.zeros((nx))
+        # for i in range(nx):
+        #     r1 = np.array(x[i])
             # Potential from all ions
-            v[i] = self.mol.v_en(r1)
+
+        v = self.mol.electron_nuclear_attraction()
 
         # print("rhf v", v)
 
@@ -307,12 +309,13 @@ class RHF1D:
         # # print(v_sym.shape)
         # V = np.diag(v_sym.ravel())
 
-        H = T + V
+        H = self.T + V
         # H = self.imaginary_time_propagation(H)
 
         if np.any(np.isnan(H)) or np.any(np.isinf(H)):
             raise ValueError("H matrix contains NaNs or infs.")
 
+        self.hcore = H
         return H
 
     def energy_nuc(self):
@@ -327,7 +330,7 @@ class RHF1D:
 
         # Hcore (kinetic + v_en)
         hcore = self.get_hcore()
-        self.hcore = hcore
+        # self.hcore = hcore
 
         # occ number
         nocc = self.mol.nelectron // 2
@@ -355,9 +358,9 @@ class RHF1D:
                 vhf = get_veff(eri, dm)
                 old_energy = energy_elec(dm, hcore, vhf)
 
-        print("\n {:4s} {:13s} de\n".format("iter", "total energy"))
+        logging.info("\n {:4s} {:13s} de\n".format("iter", "total energy"))
 
-        nuclear_energy = mol.energy_nuc()
+        nuclear_energy = mol.nuclear_repulsion()
 
         # print('nuclear repulsion', nuclear_energy)
 
@@ -881,60 +884,39 @@ class RCISD:
 
 
 
-def contract(civec):
-    pass
 
 # class UCISD(RCISD):
 #     def __init__(self, mf):
 #         pass
 
 
-def discrete_cosine_transform_matrix(n):
-    """
-    transform the Cartesian coordinates to collective coordinates
-    (e.g. enter-of-mass and relative motion)
+# def discrete_cosine_transform_matrix(n):
+#     """
+#     transform the Cartesian coordinates to collective coordinates
+#     (e.g. enter-of-mass and relative motion)
 
-    .. math::
+#     .. math::
 
-        y_k = 2 \sum_{n=0}^{N-1} x_n \cos( \frac{\pi k (2n + 1) }{2N} )
-
-
-    Parameters
-    ----------
-    n : TYPE
-        DESCRIPTION.
-    dtype : TYPE, optional
-        DESCRIPTION. The default is None.
-
-    Returns
-    -------
-    TYPE
-        DESCRIPTION.
-
-    """
-    from scipy.fft import dct
-
-    return dct(np.eye(n), type=2, axis=0, norm='ortho')
-    # return dft(n, scale='sqrtn')
+#         y_k = 2 \sum_{n=0}^{N-1} x_n \cos( \frac{\pi k (2n + 1) }{2N} )
 
 
+#     Parameters
+#     ----------
+#     n : TYPE
+#         DESCRIPTION.
+#     dtype : TYPE, optional
+#         DESCRIPTION. The default is None.
 
-# print(T.T @ T)
+#     Returns
+#     -------
+#     TYPE
+#         DESCRIPTION.
 
+#     """
+#     from scipy.fft import dct
 
-
-# natom = 5
-# elements = ['H'] * natom
-# T = discrete_cosine_transform_matrix(natom - 2) # remove the boundary atoms
-
-# print(T)
-
-
-# nroots = 6
-
-# for n in range(N):
-# # if True:
-#     d = ds[n]
+#     return dct(np.eye(n), type=2, axis=0, norm='ortho')
+#     # return dft(n, scale='sqrtn')
 
 
 
@@ -956,7 +938,7 @@ if __name__=='__main__':
     # ax.plot(r, v)
     from pyqed.qchem.dvr.rhf import RHF1D
     from pyqed.models.ShinMetiu2e1d import AtomicChain
-    from pyqed import au2angstrom
+    from pyqed import au2angstrom, discrete_cosine_transform_matrix
 
     import numpy as np
 
@@ -984,8 +966,8 @@ if __name__=='__main__':
     nstates = 3
     e_casci = np.zeros((N, nstates))
 
-    i = 5
-    print(T[:,i])
+    i = 3
+    print(T[i])
 
     Rf = 2
     for n in range(N):
@@ -1011,9 +993,9 @@ if __name__=='__main__':
         e_hf[n] = mf.e_tot
 
         # CASCI
-        cas = CASCI(mf, ncas=mol.nelec//2+2)
+        mc = CASCI(mf, ncas=mol.nelec//2+2)
 
-        E, X = cas.run(nstates)
+        E, X = mc.run(nstates)
         e_casci[n] = E
 
 
@@ -1021,9 +1003,9 @@ if __name__=='__main__':
     import ultraplot as plt
     fig, ax = plt.subplots()
 
-    ax.plot(ds, e_hf)
-
-    ax.plot(ds, e_casci[:,0])
+    ax.plot(ds, e_hf, '--')
+    for n in range(nstates):
+        ax.plot(ds, e_casci[:,n], '-o')
 
     h1e = mf.hcore
     eri = mf.eri

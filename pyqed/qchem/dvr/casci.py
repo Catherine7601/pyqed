@@ -19,13 +19,22 @@ from opt_einsum import contract
 from pyqed import dagger, dag, tensor
 from itertools import combinations
 import warnings
+import logging
 
 from pyqed.qchem.ci.fci import givenΛgetB, SpinOuterProduct
+from pyqed.qchem.mcscf.casci import make_rdm1
 from pyqed.qchem.dvr import RHF1D
+import pyqed
 
+def direct_ci(ci0=None):
+    # CI without constructing the full Hamiltonian
 
+    # if max_memory < civec_size*6*8e-6:
+    #     logging.warn('Not enough memory for FCI solver. '
+    #              'The minimal requirement is %.0f MB', civec_size*60e-6)
+    pass
 
-class CASCI:
+class CASCI(pyqed.qchem.mcscf.casci.CASCI):
     def __init__(self, mf, ncas, nelecas=None, mu=None):
         """
         Exact diagonalization (FCI) on the complete active space (CAS) by FCI or
@@ -71,7 +80,8 @@ class CASCI:
             self.nelecas = mf.mol.nelec
             self.ncore = 0
         else:
-            raise ValueError('For now all electrons have to be active.')
+            if nelecas != mf.mol.nelec:
+                raise ValueError('All electrons have to be active.')
             self.nelecas = nelecas
             self.ncore = mf.nelec//2 - nelecas//2 # core orbs
 
@@ -86,7 +96,11 @@ class CASCI:
 
         self.mo_coeff = mf.mo_coeff
 
+        #####
         self.binary = None
+        self.SC1 = None
+        self.SC2 = None
+        self.e_tot = None
 
     def get_SO_matrix(self, SF=False, H1=None, H2=None):
         """
@@ -168,7 +182,7 @@ class CASCI:
         #     return H1, H2
         return H1, H2
 
-    def natural_orbitals(self, dm, nco=None):
+    def natural_orbitals(self, dm=None, nco=None):
         natural_orb_occ, natural_orb_coeff = np.linalg.eigh(dm)
 
         return natural_orb_occ, natural_orb_coeff
@@ -263,14 +277,13 @@ class CASCI:
 
     def run(self, nstates=3):
         from pyqed.qchem.ci.fci import SlaterCondon, CI_H
+        from pyqed.qchem.mcscf import spin_square
 
         mf = self.mf
         ncas = self.ncas
         ncore = self.ncore
 
         mo_occ = mf.mo_occ[:, :ncas]/2
-
-        print(mo_occ)
 
 
         # mo_occ = self.mf.mo_occ[self.ncore: self.ncore+ncas]/2
@@ -292,51 +305,67 @@ class CASCI:
         SC1, SC2 = SlaterCondon(Binary)
         H_CI = CI_H(Binary, H1, H2, SC1, SC2)
 
-        # print('HCI', H_CI)
+        self.SC1 = SC1
+        self.SC2 = SC2
+
 
         # E, X = np.linalg.eigh(H_CI)
         E, X = eigsh(H_CI, k=nstates, which='SA')
 
         e_nuc = self.mol.energy_nuc()
 
-        return E + e_nuc, X
+        self.e_tot = E + e_nuc
+        self.ci = [X[:, n] for n in range(nstates)]
 
-    def make_rdm1(self, civec):
+        for i in range(nstates):
+            ss = spin_square(*self.make_rdm12(i))
+            print("CASCI Root {}  E = {:.10f}  S^2 = {:.6f}".format(i, self.e_tot[i], ss))
+
+        return self
+
+
+
+    def make_rdm1(self, state_id, with_core=False, with_vir=False, representation='mo'):
         """
-        spin-traced 1RDM
-
+        spin-traced 1e reduced density matrix
         .. math::
 
-            D_{pq} = \sum_{s = \alpha, \beta} \lange \Psi| q^\dag_s p_s | \Psi \rangle
+            \gamma[p,q] = <q_alpha^\dagger p_alpha> + <q_beta^\dagger p_beta>
+
 
         Returns
         -------
         None.
 
         """
-        mo_coeff = self.mo_coeff
 
+        ci = self.ci[state_id]
+        # if representation.lower() == 'ao':
+        #     C = self.mf.mo_coeff
+        #     h1e = ao2mo(h1e, C)
+
+        ncore = self.ncore
+        ncas = self.ncas
+        nmo = self.mf.nmo
+
+        # if ncore > 0:
+        #     c_core = 2 * np.trace(h1e[:ncore,:ncore])
+        # else:
+        #     c_core = 0
+        if with_core and with_vir:
+
+            D = np.zeros((nmo, nmo), dtype=float)
+            if ncore > 0: D[:ncore, :ncore] = 2
+            D[ncore:ncore+ncas, ncore:ncore+ncas] = make_rdm1(ci, self.binary, self.SC1)
+
+            return D
+        else:
+            return make_rdm1(ci, self.binary, self.SC1)
+
+    def fix_spin(self,s=0):
         pass
 
-    def make_rdm2(self):
-        pass
 
-# class CAS_JWT(CASCI):
-
-class CASSCF(CASCI):
-    """
-
-    Using the OptOrbFCI algorithm to optimize orbitals (better than conventional
-                                                        CASSCF algorithm)
-
-    Refs:
-        Q. Sun et al. / Chemical Physics Letters 683 (2017) 291–299
-
-
-
-    """
-    def run(self):
-        pass
 
 # def nonorthogonal_transition_density_matrix(cibra, ciket, h1e=None, h2e=None):
 

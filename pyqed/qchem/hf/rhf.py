@@ -31,7 +31,7 @@ class RHF:
 
         self.nocc = self.mol.nelec//2
 
-        self.nao = self.nmo = self.mol.nao # number of MOs
+        self.nao = self.nmo = mol.nao # number of MOs
         self.nvir = self.nmo - self.nocc
 
         self.nso = None
@@ -63,6 +63,7 @@ class RHF:
         self.e_tot, self.e_nuc, self.mo_energy, self.mo_coeff, self.mo_occ, self.hcore, \
             self.vhf, self.dm = hartree_fock(self.mol, **kwargs)
         return self
+    
 
     def get_eri(self, representation='mo'):
         """
@@ -134,14 +135,25 @@ class RHF:
     def get_ovlp(self):
         return self.mol.overlap
 
-    def get_fock(self):
-        pass
+    def get_fock(self, dm=None):
+        
+        if dm is None:
+            dm = self.dm 
+            
+        hcore = self.get_hcore()
+        veff = self.get_veff(dm)
+        
+        return hcore + veff
 
-    def get_veff(self):
-        return get_veff(self.mol, self.dm)
+    def get_veff(self, dm):
+        return get_veff(self.mol, dm)
 
     def get_j(self):
         return get_jk(self.mol, self.dm, with_k=False)[0]
+    
+    def get_jk(self):
+
+        return get_jk(self.mol, self.dm, with_k=True)
 
     def get_hcore(self):
         """

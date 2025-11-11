@@ -24,7 +24,6 @@ from pyqed.davidson import davidson
 
 from pyqed import au2ev, au2angstrom, fine_structure, pauli
 from pyqed.dvr import SineDVR
-from pyqed.qchem import Molecule
 # from pyqed import scf
 # from pyqed.scf import make_rdm1, energy_elec
 # from pyqed.jordan_wigner import jordan_wigner_one_body, jordan_wigner_two_body
@@ -53,10 +52,10 @@ def soft_coulomb(r, R=1):
 soft_coulomb = jnp.vectorize(soft_coulomb)
 
 def electron_nuclear_attraction(r, R):
-    v = 0
-    for a in range(len(R)):
-        d = jnp.linalg.norm(r - R[a])
-        v += jnp.sum(-soft_coulomb(d))
+    # v = 0
+    # for a in range(len(R)):
+    d = jnp.linalg.norm(r - R)
+    v = jnp.sum(-soft_coulomb(d))
 
     return v
 
@@ -69,12 +68,12 @@ def nuclear_repulsion(R):
     return v
 
 
-# def nuc_grad(r, R=1):
+def nuc_grad(r, R=1):
 
-#     if np.isclose(r, 0):
-#         return 0
-#     else:
-#         return ((2 * np.exp(-r**2/R**2))/(np.sqrt(np.pi) * R) - erf(r/R))/r**2
+    if np.isclose(r, 0):
+        return 0
+    else:
+        return ((2 * np.exp(-r**2/R**2))/(np.sqrt(np.pi) * R) - erf(r/R))/r**2
 
 
 
@@ -844,7 +843,7 @@ class AtomicChain(ShinMetiu1d):
         # return meff
 
 
-    def electron_nuclear_attraction(self, gradients=None):
+    def electron_nuclear_attraction(self, gradients=[1, 2]):
         """
         Electron-nucleus interaction potential.
         """
@@ -939,50 +938,34 @@ class AtomicChain(ShinMetiu1d):
 
         return H
 
-    def nuclear_repulsion(self, gradients=None):
+    def nuclear_repulsion(self, gradients=[1,2]):
         # Ra = self.left
         # Rb = self.right
+        R = self.R
 
         if gradients is None:
-
             return nuclear_repulsion(self.R)
-
         else:
-
-            R = self.R
-
             v, dv = value_and_grad(nuclear_repulsion, argnums=0)(R)
 
             ddv = hessian(nuclear_repulsion, argnums=0)(R)
-
+            # g = ddv(R)
+            # print('ddv', g)
 
             return v, dv, ddv
-
-    def energy_nuc(self):
-        # FOR COMPATIBILITY Use nuclear_repulsion()
-        return nuclear_repulsion(self.R)
-
 
 
     def nuc_grad(self, order=[1,2]):
         return Gradient(self)
-
+    
 
 class Gradient:
     def __init__(self, mf_or_mol):
-        # if isinstance(mf_or_mol, Molecule):            
-        #     self.mol = mf_or_mol
-        # else:
-        #     self.mol = mf_or_mol.mol 
-        
-        self.mol = mf_or_mol
-            
-        self.atom_coords = mf_or_mol.atom_coords
-        self.x = self.mol.x
-
+        pass 
+    
     def electron_nuclear_attraction(self):
-
-
+        
+        
         R = self.atom_coords
 
         dv = grad(electron_nuclear_attraction, argnums=1)
@@ -992,20 +975,24 @@ class Gradient:
         ddv = hessian(electron_nuclear_attraction, argnums=1)
         g = vmap(ddv, in_axes=[0, None])(self.x, R)
 
+        return v, f, g
+
         return f, g
-
+    
     def nuclear_repulsion(self):
-        R = self.atom_coords
-
+        R = self.R 
+        
         v, dv = value_and_grad(nuclear_repulsion, argnums=0)(R)
 
         ddv = hessian(nuclear_repulsion, argnums=0)(R)
+        # g = ddv(R)
+        # print('ddv', g)
 
-        return dv, ddv
+        return v, dv, ddv
+    
 
-
-
-
+    
+        
 
 def effective_mass(t, atom_mass=None, mass_scaled=True):
     """
@@ -1119,7 +1106,6 @@ if __name__=='__main__':
     from pyqed.qchem.dvr.rhf import RHF1D
     from pyqed.qchem.dvr.casci import CASCI
     from pyqed.qchem.hf.rhf import ao2mo
-    from opt_einsum import contract
 
     # r = np.linspace(0, 1)
     # # v = [soft_coulomb(_r, 1) for _r in r]
@@ -1128,14 +1114,14 @@ if __name__=='__main__':
     # fig, ax = plt.subplots()
     # ax.plot(r, v)
 
-    L = 12
+    L = 10/au2angstrom
         # print(self.L)
         # self.mass = mass  # nuclear mass
     # z = np.array([-L/2, -L/4, L/4, L/2])
     z0 = np.linspace(-1, 1, 4) * L/2
     print(z0)
 
-    print('distance/bohr = ', (z0[1] - z0[0])*au2angstrom)
+    print('distance = ', (z0[1] - z0[0])*au2angstrom)
 
 
     mol = AtomicChain(z0, charge=0)
@@ -1143,10 +1129,8 @@ if __name__=='__main__':
     ###############################################################################
     # mol = ShinMetiu1d(nstates=3, nelec=2)
     # # mol.spin = 0
-    mol.create_grid([-10, 10], level=5)
+    mol.create_grid([-15/au2angstrom, 15/au2angstrom], level=5)
     mol.build()
-
-    print('e_nuc', mol.nuclear_repulsion())
     # print(mol.get_hcore())
 
     # # exact
@@ -1154,28 +1138,27 @@ if __name__=='__main__':
     # w, u = mol.single_point(R)
     # print(w)
 
-    fig, ax = plt.subplots()
-    # ax.imshow(u[:, 1].reshape(mol.x, mol.nx), origin='lower')
-    ax.plot(mol.x, mol.electron_nuclear_attraction())
+    # fig, ax = plt.subplots()
+    # ax.imshow(u[:, 1].reshape(mol.nx, mol.nx), origin='lower')
 
     # HF
     mf = RHF1D(mol)
     mf.run()
 
-    C = mf.mo_coeff
+    # from jax import grad, hessian
 
-    nuc_grad = mol.nuc_grad()
+    # r =  0.
+    # x = mol.x
 
-    f, g = nuc_grad.electron_nuclear_attraction()
+    # R = z0
+    # v = [electron_nuclear_attraction(r, R) for r in mol.x]
+    # print('force = ', v)
 
-    f_nuc, g_nuc = nuc_grad.nuclear_repulsion()
+    v, f, g = mol.electron_nuclear_attraction(gradients=[1,2])
 
-    print(f.shape, g.shape)
-    # print(g_nuc)
     # assert ncore == 0
 
-
-
+    f_mo = [ao2mo(_f, mf.mo_coeff[:, :]) for _f in f]
 
 
     # e, f1, g1 = mol.nuclear_repulsion()
@@ -1196,67 +1179,8 @@ if __name__=='__main__':
     # g = ddv(r, R)
     # print('ddv', g)
 
-    ###### CASCI ########
-    ncas=6
-    nstates = 3
-    # nelecas=4
-
-    mc = CASCI(mf, ncas)
-    mc.run(nstates)
-    
-    C = C[:, :ncas] # active space MOs
-    
-    
-    def vibronic_coupling(mc, mo_coeff):
-        """
-        first- and second-order vibronic couplings in the crude adiabatic representation
-        
-        .. math::
-            
-            F = \langle \Psi_\beta(R_0) | \nabla H(R_0) | \Psi_\alpha(R_0) \rangle 
-
-        Parameters
-        ----------
-        mc : TYPE
-            DESCRIPTION.
-        mo_coeff : TYPE
-            DESCRIPTION.
-
-        Returns
-        -------
-        F : TYPE
-            DESCRIPTION.
-        G : TYPE
-            DESCRIPTION.
-
-        """
-        # generalized density matrix
-        dm = np.zeros((nstates, nstates, ncas, ncas))
-    
-        for n in range(nstates):
-            dm[n,n] = mc.make_rdm1(state_id=n)
-            
-        for n in range(nstates):
-            for m in range(n):
-                dm[n, m] = mc.make_tdm1(n, m)
-
-        C = mo_coeff
-        f_mo = contract('ap, au, aq -> pqu', C, f, C)
-        g_mo = contract('ap, auv, aq -> pquv', C, g, C)
-        
-        F = contract('bapq, pqu -> bau', dm, f_mo)
-        G = contract('bapq, pquv -> bauv', dm, g_mo)
-        
-        # nuclear repulsion term 
-        for n in range(nstates):
-            F[n,n] += f_nuc 
-            G[n,n] += g_nuc 
-
-        return F, G
-        
-    F, G = vibronic_coupling(mc, C)
-
-
+    # cas = CASCI(mf, ncas=8, nelecas=4)
+    # w, X = cas.run(1)
     # # e_cas = w
     # print("{:.15f}".format(w[0]))
 
