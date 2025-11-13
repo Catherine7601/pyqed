@@ -1339,25 +1339,25 @@ def quasi_angular_momentum(mass, reference, changed):
 
 def eckart(reference, changed, mass, option=None):
     '''
-% Rotates 'changed' to satisfy both Eckart Conditions exactly with respect to 'reference'
-% Separate translational and rotational degrees of freedom from internal degrees of freedom
-%
-% reference: xyz coordinates as (3,NAtom)-matrix
-% changed: rotated xyz coordinates as (3,NAtom)-matrix
-% masses: 1D array of masses
-% option: shifts COM of the returned geometry to origin if it reads 'shiftCOM'
-%
-% xyz_rot: changed in orientation of reference as (3,NAtom)-matrix
-%
-%
-% Sorting of atoms has to be equal!
+    % Rotates 'changed' to satisfy both Eckart Conditions exactly with respect to 'reference'
+    % Separate translational and rotational degrees of freedom from internal degrees of freedom
+    %
+    % reference: xyz coordinates as (3,NAtom)-matrix
+    % changed: rotated xyz coordinates as (3,NAtom)-matrix
+    % masses: 1D array of masses
+    % option: shifts COM of the returned geometry to origin if it reads 'shiftCOM'
+    %
+    % xyz_rot: changed in orientation of reference as (3,NAtom)-matrix
+    %
+    %
+    % Sorting of atoms has to be equal!
 
-    Refs:
-% The procedure is following: Dymarsky, Kudin, J. Chem. Phys. 122, 124103 (2005) and
-% especially Coutsias, et al., J. Comput. Chem. 25, 1849 (2004).
-% According to Kudin, Dymarsky, J. Chem. Phys. 122, 224105 (2005) satisfying Eckart and
-% minimizing the RMSD is the same problem!
-    '''
+        Refs:
+    % The procedure is following: Dymarsky, Kudin, J. Chem. Phys. 122, 124103 (2005) and
+    % especially Coutsias, et al., J. Comput. Chem. 25, 1849 (2004).
+    % According to Kudin, Dymarsky, J. Chem. Phys. 122, 224105 (2005) satisfying Eckart and
+    % minimizing the RMSD is the same problem!
+        '''
 
     def com(mass, atom_coord):
         '''
