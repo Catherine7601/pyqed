@@ -852,10 +852,6 @@ def atom_mass_list(mol):
 class Molecule:
     def __init__(self, atom, charge=0, spin=0, basis=None, unit='bohr', **kwargs):
 
-        # mol = super(Molecule, self).__init__(atom=atom, **kwargs)
-
-        # mol = gto.M(atom, **kwargs)
-
         if isinstance(atom, str):
             # The input atom is a geometry file
             if os.path.isfile(atom):
@@ -1043,9 +1039,25 @@ class Molecule:
         return self
 
     def set_geom(self, R):
+        """
+        update the molecular geometry (rebuild the AO integrals)
+
+        Parameters
+        ----------
+        R : TYPE
+            DESCRIPTION.
+
+        Returns
+        -------
+        TYPE
+            DESCRIPTION.
+
+        """
         # update coordinates
         for i in range(self.natom):
             self._atom[i][1] = R[i]
+
+        # self.build()
 
         return self
 
@@ -1063,8 +1075,12 @@ class Molecule:
         None.
 
         """
-        self.atom_coords = eckart(ref.T, self.atom_coords.T, self.mass)
-        return self.atom_coords
+
+        atom_coords = eckart(ref.T, self.atom_coords().T, \
+                             self.atom_mass_list())
+
+        self.set_geom(atom_coords)
+        return self
 
     def principle_axes(self):
         pass
@@ -1323,6 +1339,57 @@ def readxyz(fname):
     return build_atom_from_coords(atomic_symbols, atomic_coordinates)
 
 
+# def dihedral(r1, r2, r3, r4):
+#     """
+
+#        Calculate dihedral angle (in radians) between 4 atoms
+#        For more information, see:
+#            http://math.stackexchange.com/a/47084
+
+#     Parameters
+#     ----------
+#     r1 : 3D vector
+#         position of the first atom
+#     atom2 : TYPE
+#         DESCRIPTION.
+#     atom3 : TYPE
+#         DESCRIPTION.
+#     atom4 : TYPE
+#         DESCRIPTION.
+
+#     Returns
+#     -------
+#     dihedral : TYPE
+#         DESCRIPTION.
+
+#     """
+#     import jax.numpy as jnp
+
+#     # Vectors between 4 atoms
+#     b1 = r2 - r1
+#     b2 = r2 - r3
+#     b3 = r4 - r3
+
+#     # Normal vector of plane containing b1,b2
+#     n1 = jnp.cross(b1, b2)
+#     un1 = n1 / jnp.norm(n1)
+
+#     # Normal vector of plane containing b1,b2
+#     n2 = jnp.cross(b2, b3)
+#     un2 = n2 / jnp.norm(n2)
+
+#     # un1, ub2, and m1 form orthonormal frame
+#     ub2 = b2 / jnp.norm(b2)
+#     um1 = jnp.cross(un1, ub2)
+
+#     # dot(ub2, n2) is always zero
+#     x = jnp.dot(un1, un2)
+#     y = jnp.dot(um1, un2)
+
+#     dihedral = jnp.arctan2(y, x)*(180.0/pi)
+#     if dihedral < 0:
+#         dihedral = 360.0 + dihedral
+#     return dihedral
 
 def project_nac():
     pass
@@ -1358,6 +1425,7 @@ def eckart(reference, changed, mass, option=None):
     % According to Kudin, Dymarsky, J. Chem. Phys. 122, 224105 (2005) satisfying Eckart and
     % minimizing the RMSD is the same problem!
         '''
+    assert reference.shape == changed.shape
 
     def com(mass, atom_coord):
         '''
@@ -1384,6 +1452,7 @@ def eckart(reference, changed, mass, option=None):
     #     raise ValueError('Imaginary coordinates in the XYZ-Structures!')
 
     natoms = len(mass)
+
 # % shift origin to the center of mass
 # % Eckart condition of translation (Eckart 1)
     com_ref = com(mass, reference)
@@ -1394,8 +1463,8 @@ def eckart(reference, changed, mass, option=None):
         changed[:, i] -= com_changed
 
 
-    if (abs(max(max(com_ref))) > 1e-4):
-         raise Warning('Warning! Translational Eckart Condition for reference not satisfied!')
+    # if (abs(max(max(com_ref))) > 1e-4):
+    #      raise Warning('Warning! Translational Eckart Condition for reference not satisfied!')
 
 
 
@@ -1769,17 +1838,19 @@ if __name__ == '__main__':
 
 
 
-    # geometry2 = [['H' , (0.1,      0., 0.)],
-    #             ['H', (1.3, 0., 0.)]]
+    geometry2 = [['H' , (0.1,      0., 0.)],
+                ['H', (1.3, 0., 0.)],
+                ['H', (1.5, 0, 0)]]
 
-    # mol2 = Molecule(atom=geometry2)
+    mol2 = Molecule(atom=geometry2)
 
 
 
-    # print(mol2.atom_coords)
+    print(mol2.atom_coords().shape)
     # print(mol2.com())
     # mol2.molecular_frame()
-    # print(mol2.eckart_frame(mol.atom_coords()))
+
+    mol2.eckart_frame(mol.atom_coords())
 
     # print(mol.natm)
 
