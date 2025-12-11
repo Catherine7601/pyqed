@@ -59,7 +59,7 @@ def h1e_for_cas(mf, ncas, ncore, mo_coeff=None):
 
 
 class CASCI:
-    def __init__(self, mf, ncas, nelecas, ncore=None, spin=None, mu=None):
+    def __init__(self, mf, ncas, nelecas, ncore=None, spin=None, spin_purification=False):
         """
         Exact diagonalization (FCI) on the complete active space (CAS) by FCI or
         Jordan-Wigner transformation
@@ -119,7 +119,7 @@ class CASCI:
         self.spin = spin 
 
         self.mf = mf
-        self.chemical_potential = mu
+        # self.chemical_potential = mu
 
         self.mol = mf.mol
 
@@ -137,6 +137,8 @@ class CASCI:
         self.SC1 = None # SlaterCondon rule 1
         self.eri_so = None # spin-orbital ERI
         
+        self.spin_purification = spin_purification
+        
 
     def get_SO_matrix(self, spin_flip=False, H1=None, H2=None):
         """
@@ -144,6 +146,11 @@ class CASCI:
 
         SF: bool
             spin-flip
+        
+        Returns
+        -------
+        H1: list of [h1e_a, h1e_b]
+        H2: list of ERIs [[ERI_aa, ERI_ab], [ERI_ba, ERI_bb]]
         """
         # from pyscf import ao2mo
 
@@ -230,7 +237,7 @@ class CASCI:
 
     def size(self, basis='sd', S=0):
 
-        return size(self.ncas, self.nelecas)
+        return size_of_cas(self.ncas, self.nelecas)
 
     def qubitization(self, orb='mo'):
 
@@ -346,13 +353,13 @@ class CASCI:
         self.H = H
         return H
 
-    def fix_spin(self, s=None, ss=None, shift=0.2):
+    def fix_spin(self, h1e, h2e, s=None, ss=None, shift=0.2):
         """
         fix the spin by energy penalty
 
         .. math::
 
-            \mu (\hat{S}^2 - S(S+1))
+            H = H + \mu (\hat{S}^2 - S(S+1))
 
         Parameters
         ----------
@@ -381,7 +388,22 @@ class CASCI:
         if ss == 0:
             # first-order spin penalty J. Phys. Chem. A 2022, 126, 12, 2050–2060
             # H' = H + J \hat{S}^2
-            pass
+            # nmo = h1e.shape[0]
+            ncas = self.ncas
+            
+
+            h1e = [h + 3./4 * shift * np.eye(ncas) for h in h1e]
+                
+            for p in range(ncas):
+                for q in range(ncas):
+                    h2e[:, :, p, q, q, p] -= 0.5 * shift
+                    h2e[:, :, p, p, q, q] -= 1./4 * shift 
+            
+            # self.spin_purification = True 
+            
+            return h1e, h2e 
+            
+            
         else:
             # second-order spin penalty
             raise NotImplementedError('Second-order spin panelty not implemented.')
@@ -416,7 +438,8 @@ class CASCI:
         # print('------------------------------')
         # print("             CASCI              ")
         # print('------------------------------\n')
-
+        self.nstates = nstates 
+        
         if method == 'ci':
 
             # define the core and active space orbitals
@@ -441,6 +464,13 @@ class CASCI:
             print('Number of determinants', binary.shape[0])
 
             H1, H2 = self.get_SO_matrix()
+            
+            # print(H1, H2)
+            
+            if self.spin_purification:
+                # spin penalty
+                H1, H2 = self.fix_spin(H1, H2, ss=self.spin)
+            
             
             self.hcore = H1 
 
@@ -795,7 +825,7 @@ class CASCI:
 
 #     return E, X
 
-def size(norb, nelec, basis='sd', S=0):
+def size_of_cas(norb, nelec, basis='sd', S=0):
     """
     size of CAS
 
@@ -865,6 +895,10 @@ def spin_square(dm1, dm2):
                - 0.25*np.einsum("iijj", dm2))
 
     return spin_square
+
+# def ss_matrix():
+    
+#     ss = CI_H(binary, H1, H2, SC1, SC2)
 
 def contract_with_tdm1(cibra, ciket, binary, SC1, h1e):
     """
@@ -1006,7 +1040,7 @@ def make_rdm1(ci, binary, SC1):
     H[I_B, J_B] -= np.einsum("Kp, Kq -> Kpq", b_t, b, optimize=True)
 
 
-    return np.einsum('I, IJpq, J -> pq', ci.conj(), H, ci)
+    return np.einsum('I, IJpq, J -> pq', ci.conj(), H, ci).T
 
 def make_tdm1(cibra, ciket, binary, SC1):
     """
@@ -1274,39 +1308,39 @@ if __name__ == "__main__":
     from pyqed.qchem.ci.cisd import overlap
 
 
-    mol = Molecule(atom = [
-    ['Li' , (0. , 0. , 0)],
-    ['F' , (0. , 0. , 1)], ])
+    # mol = Molecule(atom = [
+    # ['Li' , (0. , 0. , 0)],
+    # ['F' , (0. , 0. , 1)], ])
 
-    mol.basis = '631g'
-    mol.charge = 0
+    # mol.basis = '631g'
+    # mol.charge = 0
 
-    mol.molecular_frame()
-    print(mol.atom_coords())
+    # mol.molecular_frame()
+    # print(mol.atom_coords())
 
-    nstates = 3
-    Rs = np.linspace(1,4,4)
-    E = np.zeros((nstates, len(Rs)))
+    # nstates = 3
+    # Rs = np.linspace(1,4,4)
+    # E = np.zeros((nstates, len(Rs)))
 
-    for R in Rs:
+    # for R in Rs:
 
-        atom = [
-        ['Li' , (0. , 0. , 0)],
-        ['F' , (0. , 0. , R)]]
+    #     atom = [
+    #     ['Li' , (0. , 0. , 0)],
+    #     ['F' , (0. , 0. , R)]]
 
-        mol = Molecule(atom, basis='631g')
+    #     mol = Molecule(atom, basis='631g')
 
-        mol.build()
+    #     mol.build()
 
-        mf = mol.RHF()
-        mf.run()
+    #     mf = mol.RHF()
+    #     mf.run()
 
-        ncas, nelecas = (4,2)
-        casci = CASCI(mf, ncas, nelecas)
+    #     ncas, nelecas = (4,2)
+    #     casci = CASCI(mf, ncas, nelecas)
 
-        casci.run(nstates)
+    #     casci.run(nstates)
 
-        casci.e_tot
+    #     casci.e_tot
 
     #### test overlap
     mol2 = Molecule(atom = [
@@ -1321,11 +1355,16 @@ if __name__ == "__main__":
 
 
     ncas, nelecas = (4,2)
-    casci2 = CASCI(mf2, ncas, nelecas).run(2)
+    mc = CASCI(mf2, ncas, nelecas, spin_purification=False)
+    mc.run(3)
+    
+    mc = CASCI(mf2, ncas, nelecas, spin_purification=True)
+    mc.run(3)
+
 
     # casci.run()
-    S = overlap(casci, casci2)
-    print(S)
+    # S = overlap(casci, casci2)
+    # print(S)
 
     ### pyscf
     # from pyscf import gto, mp, mcscf

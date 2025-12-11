@@ -646,10 +646,12 @@ if __name__=='__main__':
     # Define atomic symbols and coordinates (i.e., basis function centers)
     atoms = ["H", "H"]
     atcoords = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
-    basis_dict = parse_gbs('basis_set/6-31g.1.gbs')
+    basis_dir = os.path.abspath(f'{pyqed.__file__}/../qchem/basis_set/')
+
+    basis_dict = parse_gbs(basis_dir+'/6-31g.1.gbs')
     basis = make_contractions(basis_dict, atoms, atcoords, 'c')
 
-    # print(basis)
+    print([g.exps for g in basis])
 
 
     # # To obtain the total number of AOs we compute the cartesian components for each angular momentum
@@ -711,15 +713,18 @@ if __name__=='__main__':
     # print(basis[0].exps, basis[0].coefs)
     print(atcoords[1])
     print(point_charge(basis[0], basis[0], atcoords[1]))
-    s,t, v, eri = ao_ints(basis, atcoords)
+    # s,t, v, eri = ao_ints(basis, atcoords)
     # print(t)
     # point_charge(a, a, myOrigin))
-    print(v)
+    # print(v)
 
     # from pyqed.qchem import Molecule
     # mol = Molecule(atom = [
     # ['H' , (0. , 0. , 0)],
     # ['H' , (0. , 0. , 1.)], ], basis='631g')
+    # mol.build()
+
+    # print(mol._bas[0].)
 
     # mol.build()
     # print(mol.eri)
