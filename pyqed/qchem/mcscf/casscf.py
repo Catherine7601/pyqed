@@ -23,54 +23,56 @@ class CASSCF(CASCI):
     """
     def __init__(self, mf, ncas, nelecas, **kwargs):
         super().__init__(mf, ncas, nelecas, **kwargs)
-        
+
         self.max_cycles = 20 # macroiterations
         self.tol = 1e-6 # energy tol
         self.mo_coeff = None # opt orb
-        
-        
-        self.weights = None 
+
+
+        self.weights = None
         self.nstates = 1
-        
-        
-    def run(self):
-        mf = self.mf 
-        
+
+
+    def run(self, purify_spin=True, shift=0.2):
+        mf = self.mf
+
         # canonical molecular orbs
         C0 = mf.mo_coeff
-        
-        # CASCI roots 
-        nstates = self.nstates 
-        
+
+        # CASCI roots
+        nstates = self.nstates
+
         nmo = self.mf.nao
-        ncas = self.ncas 
+        ncas = self.ncas
         nelecas = self.nelecas
-        
+
         mc = CASCI(mf, ncas=ncas, nelecas=nelecas)
-        mc.run(nstates)
-        
+        mc.run(nstates, purify_spin=purify_spin, shift=shift)
+
+
         # matrix elements in CMOs
         h1e = mf.get_hcore_mo()
         eri = mf.get_eri_mo()
-        
+
         U0 = np.zeros((nmo, ncas))
         for i in range(ncas):
             U0[i, i] = 1.
-        
+
         if nstates == 1:
-            C, mc = kernel(mc, U0, nelecas, ncas, C0, h1e, eri)
-        
+            C, mc = kernel(mc, U0, nelecas, ncas, C0, h1e, eri, purify_spin=purify_spin, shift=shift)
+
         elif nstates > 1:
-            
+
             if self.weights is None:
                 raise ValueError('State weights not provided.')
-                
-            C, mc = kernel_state_average(mc, self.weights, U0, nelecas, ncas, C0, h1e, eri)
-        
+
+            C, mc = kernel_state_average(mc, self.weights, U0, nelecas, ncas,
+                                         C0, h1e, eri, purify_spin=purify_spin, shift=shift)
+
         self.mo_coeff = C
         self.e_tot = mc.e_tot
-        self.ci = mc.ci 
-        
+        self.ci = mc.ci
+
         return self
 
     def state_average(self, weights):
@@ -109,7 +111,7 @@ def energy(U, h1e, eri, dm1, dm2):
 
 
 
-def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6):
+def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6, **kwargs):
     """
     complete active space orbital optimization with orthonomality constraint
 
@@ -158,7 +160,7 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6):
     # U0 = np.zeros((nmo, ncas))
     # for i in range(ncas):
     #     U0[i, i] = 1
-    
+
     U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
 
     k = 0
@@ -168,11 +170,14 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6):
     converged = False
     while k < max_cycles:
 
-        mo_coeff = C0 @ U 
-        mc.run(mo_coeff=mo_coeff)
+        mo_coeff = C0 @ U
+
+        print('MO', mo_coeff.shape)
+
+        mc.run(mo_coeff=mo_coeff, **kwargs)
 
         if abs(mc.e_tot - e_old) < tol:
-            print('CASSCF converged at macroiteration {}'.format(k))
+            print('\nCASSCF converged at macroiteration {}'.format(k))
             print("E(CASSCF) = {}".format(mc.e_tot))
             converged = True
             break
@@ -181,7 +186,7 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6):
 
 
         dm1, dm2 = mc.make_rdm12(0)
-        
+
         # U0 = orth(U + 0.1 * np.random.randn(nmo, ncas))
 
         U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
@@ -195,30 +200,31 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6):
     return mo_coeff, mc
 
 
-def kernel_state_average(mc, weights, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6):
-    
-    nstates = mc.nstates 
-    
+def kernel_state_average(mc, weights, U0, nelecas, ncas, C0, h1e, eri,
+                         max_cycles=50, tol=1e-6, **kwargs):
+
+    nstates = mc.nstates
+
     dm1 = 0
     dm2 = 0
     for n in range(nstates):
         _dm1, _dm2 = mc.make_rdm12(n)
         dm1 += _dm1 * weights[n]
         dm2 += _dm2 * weights[n]
-    
+
     U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
 
 
-    e_old = sum(weights * mc.e_tot) 
+    e_old = sum(weights * mc.e_tot)
 
     converged = False
     k = 0
     while k < max_cycles:
 
-        mo_coeff = C0 @ U 
-        mc.run(nstates, mo_coeff=mo_coeff)
+        mo_coeff = C0 @ U
+        mc.run(nstates, mo_coeff=mo_coeff, **kwargs)
 
-        eAve = sum(weights * mc.e_tot) 
+        eAve = sum(weights * mc.e_tot)
 
         if abs(eAve - e_old) < tol:
             print('CASSCF converged at macroiteration {}'.format(k))
@@ -226,16 +232,16 @@ def kernel_state_average(mc, weights, U0, nelecas, ncas, C0, h1e, eri, max_cycle
             converged = True
             break
 
-        e_old = eAve 
-        
+        e_old = eAve
+
         # update 1- and 2-RDMs
         dm1 = 0
         dm2 = 0
         for n in range(nstates):
             _dm1, _dm2 = mc.make_rdm12(n)
             dm1 += _dm1 * weights[n]
-            dm2 += _dm2 * weights[n]  
-            
+            dm2 += _dm2 * weights[n]
+
 
         U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
         # print(E + mol.energy_nuc())
@@ -246,8 +252,8 @@ def kernel_state_average(mc, weights, U0, nelecas, ncas, C0, h1e, eri, max_cycle
         print('Max macro steps reached. CASSCF not converged.')
 
     return mo_coeff, mc
-       
-    
+
+
 def constrained_optimization(U, h1e, h2e, dm1, dm2, max_steps=50):
     """
     complete active space orbital optimization with orthonomality constraint
@@ -337,15 +343,12 @@ if __name__=='__main__':
     from pyqed import Molecule
     from pyqed.qchem.mcscf import CASCI
 
-    mol = Molecule(atom='Li 0 0 0; H 0 0 1.4', unit='b', basis='631g')
+    mol = Molecule(atom='H 0 0 0; H 0 0 1.4', unit='b', basis='631g')
     mol.build()
 
     mf = mol.RHF().run()
-    
-    mc = CASSCF(mf, ncas=2, nelecas=2)
-    nstates = 3
+
+    mc = CASSCF(mf, ncas=4, nelecas=2)
+    nstates = 2
     mc.state_average(weights = np.ones(nstates)/nstates)
-    mc.run()
-
-
-
+    mc.run(purify_spin=True, shift=0.5)

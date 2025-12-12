@@ -13,11 +13,11 @@ from functools import reduce
 import numpy as np
 from scipy.linalg import eigh
 from scipy.sparse.linalg import eigsh
-from pyscf.scf import _vhf
+
 import sys
 from opt_einsum import contract
 
-from pyqed import dagger, dag, tensor
+from pyqed import tensor
 from itertools import combinations
 import warnings
 
@@ -26,7 +26,7 @@ from pyqed.qchem.ci.fci import givenΛgetB, SpinOuterProduct, get_fci_combos, Sl
 from pyqed.qchem.jordan_wigner.spinful import jordan_wigner_one_body, annihilate, \
             create, Is #, jordan_wigner_two_body
 
-# from opt_einsum import contract
+
 from pyqed.qchem.hf.rhf import ao2mo
 
 def h1e_for_cas(mf, ncas, ncore, mo_coeff=None):
@@ -113,10 +113,10 @@ class CASCI:
 
         self.mo_core = None
         self.mo_cas = None
-        
+
         if spin is None:
-            spin = mf.mol.spin 
-        self.spin = spin 
+            spin = mf.mol.spin
+        self.spin = spin
 
         self.mf = mf
         # self.chemical_potential = mu
@@ -128,21 +128,21 @@ class CASCI:
         self.e_core = None # core energy
         self.ci = None # CI coefficients
         self.H = None
-        
-        
-        self.hcore = None # effective 1e core Hamiltonian including the influence of frozen orbitals
+
+
+        self.hcore = self.h1e_cas = None # effective 1e CAS Hamiltonian including the influence of frozen orbitals
         self.Nu = None
         self.Nd = None
         self.binary = None
         self.SC1 = None # SlaterCondon rule 1
-        self.eri_so = None # spin-orbital ERI
-        
+        self.eri_so = self.h2e_cas = None # spin-orbital ERI in the active space
+
         self.spin_purification = False
-        
+
         # effective CAS Hamiltonian
-        self.h1e = None 
-        self.h2e = None 
-        
+        self.h1e = None
+        self.h2e = None
+
 
     def get_SO_matrix(self, spin_flip=False, H1=None, H2=None):
         """
@@ -150,7 +150,7 @@ class CASCI:
 
         SF: bool
             spin-flip
-        
+
         Returns
         -------
         H1: list of [h1e_a, h1e_b]
@@ -274,9 +274,10 @@ class CASCI:
             raise NotImplementedError('Nartural orbitals qubitization not implemented.')
 
 
-    def fix_nelec_by_energy_penalty(self, shift=0.1):
+    def fix_nelec(self, shift=0.1):
         """
-        fix the electron number for JW solver without symmetry 
+        fix the electron number by energy penalty.
+        This is only needed for JW solver without symmetry.
 
         Parameters
         ----------
@@ -386,7 +387,7 @@ class CASCI:
         else:
             if ss is None:
                 ss = s * (s+1)
-            else: 
+            else:
                 raise ValueError('s and ss cannot be specified simulaneously.')
 
         if ss == 0:
@@ -394,26 +395,26 @@ class CASCI:
             # H' = H + J \hat{S}^2
             # nmo = h1e.shape[0]
             ncas = self.ncas
-            
+
 
             h1e = [h + 3./4 * shift * np.eye(ncas) for h in h1e]
-                
+
             for p in range(ncas):
                 for q in range(ncas):
                     h2e[:, :, p, q, q, p] -= 0.5 * shift
-                    h2e[:, :, p, p, q, q] -= 1./4 * shift 
-            
-            self.spin_purification = True 
-            
-            return h1e, h2e 
-            
-            
+                    h2e[:, :, p, p, q, q] -= 1./4 * shift
+
+            self.spin_purification = True
+
+            return h1e, h2e
+
+
         else:
             # second-order spin penalty
             raise NotImplementedError('Second-order spin panelty not implemented.')
 
 
-    def run(self, nstates=1, mo_coeff=None, method='ci', ci0=None, purify_spin=False, ss=None):
+    def run(self, nstates=1, mo_coeff=None, method='ci', ci0=None, purify_spin=True, shift=0.2):
         """
         solve the full CI in the active space
 
@@ -442,8 +443,8 @@ class CASCI:
         # print('------------------------------')
         # print("             CASCI              ")
         # print('------------------------------\n')
-        self.nstates = nstates 
-        
+        self.nstates = nstates
+
         if method == 'ci':
 
             # define the core and active space orbitals
@@ -468,16 +469,15 @@ class CASCI:
             print('Number of determinants', binary.shape[0])
 
             H1, H2 = self.get_SO_matrix()
-            
-            # print(H1, H2)
-            
+
             if purify_spin:
-                # spin penalty
-                assert ss is not None
-                H1, H2 = self.fix_spin(H1, H2, ss=ss)
-            
-            
-            self.hcore = H1 
+                logging.info('Purify spin by energy penalty')
+                print(H2.shape)
+                # assert ss is not None
+                H1, H2 = self.fix_spin(H1, H2, ss=self.spin, shift=shift)
+
+
+            self.hcore = H1
 
             SC1, SC2 = SlaterCondon(binary)
 
@@ -902,7 +902,7 @@ def spin_square(dm1, dm2):
     return spin_square
 
 # def ss_matrix():
-    
+
 #     ss = CI_H(binary, H1, H2, SC1, SC2)
 
 def contract_with_tdm1(cibra, ciket, binary, SC1, h1e):
@@ -1362,9 +1362,9 @@ if __name__ == "__main__":
     ncas, nelecas = (4,2)
     mc = CASCI(mf2, ncas, nelecas)
     mc.run(3)
-    
-    mc = CASCI(mf2, ncas, nelecas)
-    mc.run(3, purify_spin=True, ss=0)
+
+    # mc = CASCI(mf2, ncas, nelecas)
+    mc.run(3, mo_coeff=mf2.mo_coeff, purify_spin=True, shift=0.3)
 
     # casci.run()
     # S = overlap(casci, casci2)
