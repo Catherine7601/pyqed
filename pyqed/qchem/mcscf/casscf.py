@@ -33,7 +33,7 @@ class CASSCF(CASCI):
         self.nstates = 1
 
 
-    def run(self):
+    def run(self, nstates=1):
         mf = self.mf
 
         # canonical molecular orbs
@@ -47,18 +47,18 @@ class CASSCF(CASCI):
         nelecas = self.nelecas
 
         mc = CASCI(mf, ncas=ncas, nelecas=nelecas)
-        # spin 
+        # spin
         mc.spin_purification = self.spin_purification
-        mc.ss = self.ss 
-        mc.shift = self.shift 
-        
-        # shift = self.shift 
+        mc.ss = self.ss
+        mc.shift = self.shift
+
+        # shift = self.shift
         # purify_spin = self.spin_purification
-        
-        
+
+
         # if self.spin_purification:
         #     mc.fix_spin(ss=self.ss, shift=self.shift)
-            
+
         mc.run(nstates)
 
 
@@ -123,7 +123,7 @@ def energy(U, h1e, eri, dm1, dm2):
 
 
 
-def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6, **kwargs):
+def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=30, tol=1e-6, **kwargs):
     """
     complete active space orbital optimization with orthonomality constraint
 
@@ -163,9 +163,6 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6, **kwarg
 
     dm1, dm2 = mc.make_rdm12(0)
 
-
-
-
     # eri = mc.eri_so[0, 0] # for spin-restricted calculation
     # nmo = self.nmo
 
@@ -174,8 +171,8 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6, **kwarg
     #     U0[i, i] = 1
 
     U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
-    
-    print('U shape', U.shape, C0.shape)
+
+    # print('U shape', U.shape, C0.shape)
 
     k = 0
 
@@ -186,7 +183,7 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6, **kwarg
 
         mo_coeff = C0 @ U
 
-        print('MO', mo_coeff.shape)
+        # print('MO', mo_coeff.shape)
 
         mc.run(mo_coeff=mo_coeff, **kwargs)
 
@@ -203,7 +200,7 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=50, tol=1e-6, **kwarg
 
         # U0 = orth(U + 0.1 * np.random.randn(nmo, ncas))
 
-        U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
+        U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2), tau=1)
         # print(E + mol.energy_nuc())
 
         k += 1
@@ -236,9 +233,7 @@ def kernel_state_average(mc, weights, U0, nelecas, ncas, C0, h1e, eri,
     while k < max_cycles:
 
         mo_coeff = C0 @ U
-        
-        # print('mo ', mo_coeff.shape)
-        
+
         mc.run(nstates, mo_coeff=mo_coeff, **kwargs)
 
         eAve = sum(weights * mc.e_tot)
@@ -365,8 +360,9 @@ if __name__=='__main__':
 
     mf = mol.RHF().run()
 
-    mc = CASSCF(mf, ncas=4, nelecas=2)
-    # nstates = 3
+    mc = CASSCF(mf, ncas=4, nelecas=4)
+
+    nstates = 3
     # mc.state_average(weights = np.ones(nstates)/nstates)
-    mc.fix_spin(ss=0, shift=0.2)
+    # mc.fix_spin(ss=0, shift=1)
     mc.run()

@@ -450,7 +450,7 @@ class CASCI:
         # print('------------------------------')
         # print("             CASCI              ")
         # print('------------------------------\n')
-        # self.nstates = nstates
+        self.nstates = nstates
 
         # if method == 'ci':
 
