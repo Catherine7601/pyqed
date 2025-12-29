@@ -258,15 +258,11 @@ class CASCI:
 
         # nmo = Ca.shape[1] # n
 
-        eri = mf.eri  # (pq||rs) 1^* 1 2^* 2
+        eri = mf.eri  # (pq||rs) = (pq|rs) - (ps|qr) 1^* 1 2^* 2
 
-        ### compute SO ERIs (MO)
+        ### compute SO antisymmetrized ERIs (MO)
         eri_aa = contract('ip, jq, ijkl, kr, ls -> pqrs', Ca.conj(), Ca, eri, Ca.conj(), Ca)
-
-        # physicts notation <pq|rs>
-        # eri_aa = contract('ip, jq, ij, ir, js -> pqrs', Ca.conj(), Ca.conj(), eri, Ca, Ca)
-
-        eri_aa -= eri_aa.swapaxes(1,3)
+        # eri_aa -= eri_aa.swapaxes(1,3)
 
         eri_bb = eri_aa.copy()
 
@@ -469,7 +465,7 @@ class CASCI:
             else:
                 # assert ss == s * (s+1)
 
-                raise ValueError('s and ss cannot be specified simulaneously.')
+                raise ValueError('s and ss cannot be specified simultaneously.')
 
         if ss == 0:
             # first-order spin penalty J. Phys. Chem. A 2022, 126, 12, 2050–2060
@@ -558,8 +554,6 @@ class CASCI:
         # effective hamiltonian in the CAS
         h1e, h2e = self.get_SO_matrix()
 
-        # print('h1e shape', h1e[0].shape)
-
         if self.spin_purification:
 
             logging.info('Purify spin by energy penalty')
@@ -567,18 +561,29 @@ class CASCI:
             # if self.shift is not None:
             # H1, H2 = self.fix_spin(H1, H2, ss=ss, shift=shift)
             shift = self.shift
+            
+            norb = self.ncas 
+            h1e = [h + 3./4 * shift * np.eye(norb) for h in h1e]
 
-            h1e = [h + 3./4 * shift * np.eye(ncas) for h in h1e]
+            for p in range(norb):
+                for q in range(norb):
+                    h2e[:, :, p, q, q, p] -=  0.5 * shift * 2
+                    # h2e[1, 1, p, q, q, p] -=  0.5 * shift 
+                    # h2e[0, 1, p, q, q, p] -=  0.5 * shift
+                    # h2e[1, 0, p, q, q, p] -=  0.5 * shift
 
-            for p in range(ncas):
-                for q in range(ncas):
-                    h2e[0, 0, p, q, q, p] -=  0.5 * shift
-                    h2e[1, 1, p, q, q, p] -=  0.5 * shift
-                    h2e[0, 1, p, q, q, p] -=  0.5 * shift
-                    h2e[1, 0, p, q, q, p] -=  0.5 * shift
+                    # h2e[0, 0, p, p, q, q] -= 0.25 * shift 
+                    # h2e[1, 1, p, p, q, q] -= 0.25 * shift 
+                    
+                    # h2e[0, 1, p, p, q, q] -= 0.25 * shift
+                    # h2e[1, 0, p, p, q, q] -= 0.25 * shift
+                    
 
-                    h2e[0, 0, p, p, q, q] -= 0.25 * shift
-                    h2e[1, 1, p, p, q, q] -= 0.25 * shift
+                    h2e[:, :, p, p, q, q] -= 0.25 * shift * 2
+
+        h2e[0,0] -= h2e[0,0].swapaxes(1,3)
+        h2e[1,1] -= h2e[1,1].swapaxes(1,3)
+
 
 
 
@@ -659,7 +664,11 @@ class CASCI:
 
             \gamma[p,q] = <q_alpha^\dagger p_alpha> + <q_beta^\dagger p_beta>
 
-
+        Parameters
+        ----------
+        representation: str
+            indicate which representation RDM is defined. Default 'mo'.
+            
         Returns
         -------
         None.
@@ -679,6 +688,16 @@ class CASCI:
         #     c_core = 2 * np.trace(h1e[:ncore,:ncore])
         # else:
         #     c_core = 0
+        if with_core and not with_vir:
+            
+            norb = ncas + ncore 
+            D = np.zeros((norb, norb), dtype=float)
+            
+            if ncore > 0: D[:ncore, :ncore] = 2
+            D[ncore:ncore+ncas, ncore:ncore+ncas] = make_rdm1(ci, self.binary, self.SC1)
+    
+            return D
+        
         if with_core and with_vir:
 
             D = np.zeros((nmo, nmo), dtype=float)
@@ -770,13 +789,15 @@ class CASCI:
 
 
 
-    def make_rdm12(self, state_id):
-        dm1 = self.make_rdm1(state_id)
-        dm2 = self.make_rdm2(state_id)
+    def make_rdm12(self, state_id, with_core=False):
+        dm1 = self.make_rdm1(state_id, with_core=with_core)
+        dm2 = self.make_rdm2(state_id, with_core=with_core)
+
         return dm1, dm2
 
     def spin_square(self, state_id=0):
-        pass
+        
+        return spin_square(*self.make_rdm12(state_id))
 
 
 
@@ -1464,11 +1485,11 @@ if __name__ == "__main__":
     mf2 = mol2.RHF().run()
 
 
-    ncas, nelecas = (5,4)
+    ncas, nelecas = (4,6)
     mc = CASCI(mf2, ncas, nelecas)
     mc.run(5)
 
-    print('core ', mc.ncore)
+    print('Fix spin by penalty')
 
     # mc = CASCI(mf2, ncas, nelecas)
     mc.fix_spin(ss=0, shift=0.2)

@@ -454,9 +454,6 @@ class UCISD(CI):
 
         # e_hf = self.mf.e_tot - self.mf.e_nuc
 
-
-        # print(e_hf)
-
         # E, X = np.linalg.eigh(H_CI)
         # E, X = eigsh(H_CI, k=3, which='SA')
 

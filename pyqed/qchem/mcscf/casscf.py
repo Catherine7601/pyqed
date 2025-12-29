@@ -9,7 +9,9 @@ import numpy as np
 from scipy.linalg import eigh
 # from pyqed.qchem.mcscf.casci import CASCI
 from opt_einsum import contract
-from pyqed.qchem.mcscf.direct_ci import CASCI
+# from pyqed.qchem.mcscf.direct_ci import CASCI
+from pyqed.qchem.mcscf.casci import CASCI
+
 
 from pyqed.qchem.optimize import minimize
 
@@ -161,9 +163,12 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=30, tol=1e-6, **kwarg
 
     """
 
+    if mc.ncore > 0:
+        with_core = True 
+    else:
+        with_core = False
 
-
-    dm1, dm2 = mc.make_rdm12(0)
+    dm1, dm2 = mc.make_rdm12(0, with_core=with_core)
 
     # eri = mc.eri_so[0, 0] # for spin-restricted calculation
     # nmo = self.nmo
@@ -172,9 +177,11 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=30, tol=1e-6, **kwarg
     # for i in range(ncas):
     #     U0[i, i] = 1
 
+    # print('xxx', h1e.shape, dm1.shape, dm2.shape, U0.shape)
+    
     U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
 
-    # print('U shape', U.shape, C0.shape)
+    print('U shape', U.shape, C0.shape)
 
     k = 0
 
@@ -184,8 +191,6 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=30, tol=1e-6, **kwarg
     while k < max_cycles:
 
         mo_coeff = C0 @ U
-
-        # print('MO', mo_coeff.shape)
 
         mc.run(mo_coeff=mo_coeff, **kwargs)
 
@@ -198,7 +203,7 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=30, tol=1e-6, **kwarg
         e_old = mc.e_tot
 
 
-        dm1, dm2 = mc.make_rdm12(0)
+        dm1, dm2 = mc.make_rdm12(0, with_core=with_core)
 
         # U0 = orth(U + 0.1 * np.random.randn(nmo, ncas))
 
@@ -362,9 +367,11 @@ if __name__=='__main__':
 
     mf = mol.RHF().run()
 
-    mc = CASSCF(mf, ncas=3, nelecas=2)
+    mc = CASSCF(mf, ncas=3, nelecas=4)
 
-    nstates = 2
+    # nstates = 2
     # mc.state_average(weights = np.ones(nstates)/nstates)
-    # mc.fix_spin(ss=0, shift=0.2)
+    mc.fix_spin(ss=0, shift=0.2)
     mc.run()
+    
+    # correct result is E(CASSCF) = [-7.67160344]
