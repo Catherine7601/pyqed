@@ -19,6 +19,7 @@ from opt_einsum import contract
 
 from pyqed import tensor
 from itertools import combinations
+import itertools
 import warnings
 
 from pyqed.qchem import get_veff
@@ -28,6 +29,96 @@ from pyqed.qchem.jordan_wigner.spinful import jordan_wigner_one_body, annihilate
 
 
 from pyqed.qchem.hf.rhf import ao2mo
+
+def cistring(norb, nelec, sz=0):
+    """
+    Return all the possible :math:`n`-length binary
+    where :math:`k` of :math:`n` digitals are set to 1.
+
+    Parameters
+    ----------
+    norb: int
+        number of orbs. Binary length :math:`n`.
+    nelec: int or list of length 2
+        number of electrons
+
+    Returns
+    -------
+    res: list of int-lists
+        A list of list containing the binary digitals.
+
+    """
+    n = norb
+    if isinstance(nelec, (list, tuple)):
+        na, nb = nelec
+    else:
+        if np.mod(nelec, 2):
+            raise ValueError('odd number of electrons results in ambiguity. \
+                             Please set alpha and beta electrons seperately.')
+        na = nb = nelec//2
+
+    if n == 0:
+        return [[0]]
+
+    res = []
+    for bits in itertools.combinations(list(range(n)), na):
+        sa = [0] * n
+        for bit in bits:
+            sa[bit] = 1
+        res.append(sa)
+
+    if na != nb:
+
+        res_b = []
+        for bits in itertools.combinations(list(range(n)), nb):
+
+            sb = [0] * n
+            for bit in bits:
+                sb[bit] = 1
+
+            res_b.append(sb)
+
+
+    return list(itertools.product(res,res_b))
+
+
+def get_combos(mo_occ, space='fci', ncore=None, ncas=None, nvir=None):
+
+    space = space.replace(" ", "").lower()
+    nmo = len(mo_occ)
+
+    if space == 'fci': # FCI, CAS
+
+        O_sp = np.asarray(mo_occ, dtype=np.int8)
+        # number of electrons for each spin
+        N_s = np.einsum("sp -> s", O_sp)
+
+
+
+        N = O_sp.shape[1]
+
+        Λ_α = np.asarray( list(combinations( np.arange(0, N, 1, dtype=np.int8) , N_s[0] ) ) )
+        Λ_β = np.asarray( list(combinations( np.arange(0, N, 1, dtype=np.int8) , N_s[1] ) ) )
+        ΛA, ΛB = SpinOuterProduct(Λ_α, Λ_β)
+        Binary = givenΛgetB(ΛA, ΛB, N)
+
+        return Binary
+
+    elif space == 'cisd':
+        pass
+    elif space == 'cas+s': # MR-CIS
+
+        if nvir is None:
+            nvir = nmo - ncore - ncas
+
+
+        # if isinstance(mf, (scf.rhf.RHF, RHF)):
+        # if mo_occ is None:
+        #     mo_occ = [mf.mo_occ//2, ] * 2
+        # else:
+        #     mo_occ = mf.mo_occ
+
+
 
 # def ao2mo(mf, mo_coeff=None, spin_flip=False, H1=None, H2=None):
 #     """
@@ -561,23 +652,23 @@ class CASCI:
             # if self.shift is not None:
             # H1, H2 = self.fix_spin(H1, H2, ss=ss, shift=shift)
             shift = self.shift
-            
-            norb = self.ncas 
+
+            norb = self.ncas
             h1e = [h + 3./4 * shift * np.eye(norb) for h in h1e]
 
             for p in range(norb):
                 for q in range(norb):
                     h2e[:, :, p, q, q, p] -=  0.5 * shift * 2
-                    # h2e[1, 1, p, q, q, p] -=  0.5 * shift 
+                    # h2e[1, 1, p, q, q, p] -=  0.5 * shift
                     # h2e[0, 1, p, q, q, p] -=  0.5 * shift
                     # h2e[1, 0, p, q, q, p] -=  0.5 * shift
 
-                    # h2e[0, 0, p, p, q, q] -= 0.25 * shift 
-                    # h2e[1, 1, p, p, q, q] -= 0.25 * shift 
-                    
+                    # h2e[0, 0, p, p, q, q] -= 0.25 * shift
+                    # h2e[1, 1, p, p, q, q] -= 0.25 * shift
+
                     # h2e[0, 1, p, p, q, q] -= 0.25 * shift
                     # h2e[1, 0, p, p, q, q] -= 0.25 * shift
-                    
+
 
                     h2e[:, :, p, p, q, q] -= 0.25 * shift * 2
 
@@ -668,7 +759,7 @@ class CASCI:
         ----------
         representation: str
             indicate which representation RDM is defined. Default 'mo'.
-            
+
         Returns
         -------
         None.
@@ -689,15 +780,15 @@ class CASCI:
         # else:
         #     c_core = 0
         if with_core and not with_vir:
-            
-            norb = ncas + ncore 
+
+            norb = ncas + ncore
             D = np.zeros((norb, norb), dtype=float)
-            
+
             if ncore > 0: D[:ncore, :ncore] = 2
             D[ncore:ncore+ncas, ncore:ncore+ncas] = make_rdm1(ci, self.binary, self.SC1)
-    
+
             return D
-        
+
         if with_core and with_vir:
 
             D = np.zeros((nmo, nmo), dtype=float)
@@ -796,7 +887,7 @@ class CASCI:
         return dm1, dm2
 
     def spin_square(self, state_id=0):
-        
+
         return spin_square(*self.make_rdm12(state_id))
 
 

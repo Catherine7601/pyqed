@@ -396,7 +396,7 @@ class CASCI(mcscf.casci.CASCI):
         # physicts notation <pq|rs>
         # eri_aa = contract('ip, jq, ij, ir, js -> pqrs', Ca.conj(), Ca.conj(), eri, Ca, Ca)
 
-        eri_aa -= eri_aa.swapaxes(1,3)
+        # eri_aa -= eri_aa.swapaxes(1,3)
 
         eri_bb = eri_aa.copy()
 
@@ -670,26 +670,50 @@ class CASCI(mcscf.casci.CASCI):
 
             # print('Number of determinants', binary.shape[0])
 
-            H1, H2 = self.get_SO_matrix()
+            h1e, h2e = self.get_SO_matrix()
 
-            if purify_spin:
+            if self.spin_purification:
+                
                 logging.info('Purify spin by energy penalty')
 
-                # assert ss is not None
-                H1, H2 = self.fix_spin(H1, H2, ss=ss, shift=shift)
+                # if self.shift is not None:
+                # H1, H2 = self.fix_spin(H1, H2, ss=ss, shift=shift)
+                shift = self.shift
+    
+                norb = self.ncas
+                h1e = [h + 3./4 * shift * np.eye(norb) for h in h1e]
+    
+                for p in range(norb):
+                    for q in range(norb):
+                        h2e[:, :, p, q, q, p] -=  0.5 * shift * 2
+                        # h2e[1, 1, p, q, q, p] -=  0.5 * shift
+                        # h2e[0, 1, p, q, q, p] -=  0.5 * shift
+                        # h2e[1, 0, p, q, q, p] -=  0.5 * shift
+    
+                        # h2e[0, 0, p, p, q, q] -= 0.25 * shift
+                        # h2e[1, 1, p, p, q, q] -= 0.25 * shift
+    
+                        # h2e[0, 1, p, p, q, q] -= 0.25 * shift
+                        # h2e[1, 0, p, p, q, q] -= 0.25 * shift
+    
+    
+                        h2e[:, :, p, p, q, q] -= 0.25 * shift * 2
+    
+            h2e[0,0] -= h2e[0,0].swapaxes(1,3)
+            h2e[1,1] -= h2e[1,1].swapaxes(1,3)
 
 
-            self.hcore = H1
+            self.hcore = h1e
 
             SC1, SC2 = SlaterCondon(binary)
 
             self.SC1 = SC1
             self.SC2 = SC2
-            self.eri_so = H2
+            self.eri_so = h2e
 
             I_A, J_A, a_t , a, I_B, J_B, b_t , b, ca, cb = SC1
 
-            H_CI = CI_H(binary, H1, H2, SC1, SC2)
+            H_CI = CI_H(binary, h1e, h2e, SC1, SC2)
 
 
             E, X = eigsh(H_CI, k=nstates, which='SA')
@@ -732,21 +756,20 @@ class CASCI(mcscf.casci.CASCI):
             if self.spin_purification:
                 logging.info('Purify spin by energy penalty')
 
-                # assert ss is not None
+                # if self.shift is not None:
                 # H1, H2 = self.fix_spin(H1, H2, ss=ss, shift=shift)
                 shift = self.shift
-
-                h1e = [h + 3./4 * shift * np.eye(ncas) for h in h1e]
-
-                for p in range(ncas):
-                    for q in range(ncas):
-                        h2e[:, :, p, q, q, p] -=  0.5 * shift
-                        # h2e[1, 1, p, q, q, p] -=  0.5 * shift
-                        # h2e[0, 1, p, q, q, p] -=  0.5 * shift
-                        # h2e[1, 0, p, q, q, p] -=  0.5 * shift
-
-                        h2e[0, 0, p, p, q, q] -= 0.25 * shift
-                        h2e[1, 1, p, p, q, q] -= 0.25 * shift
+    
+                norb = self.ncas
+                h1e = [h + 3./4 * shift * np.eye(norb) for h in h1e]
+    
+                for p in range(norb):
+                    for q in range(norb):
+                        h2e[:, :, p, q, q, p] -=  0.5 * shift * 2   
+                        h2e[:, :, p, p, q, q] -= 0.25 * shift * 2
+    
+            h2e[0,0] -= h2e[0,0].swapaxes(1,3)
+            h2e[1,1] -= h2e[1,1].swapaxes(1,3)
 
 
 
@@ -825,6 +848,10 @@ class CASCI(mcscf.casci.CASCI):
 
             \gamma[p,q] = <q_alpha^\dagger p_alpha> + <q_beta^\dagger p_beta>
 
+        Parameters
+        ----------
+        representation: str
+            indicate which representation RDM is defined. Default 'mo'.
 
         Returns
         -------
@@ -845,6 +872,16 @@ class CASCI(mcscf.casci.CASCI):
         #     c_core = 2 * np.trace(h1e[:ncore,:ncore])
         # else:
         #     c_core = 0
+        if with_core and not with_vir:
+
+            norb = ncas + ncore
+            D = np.zeros((norb, norb), dtype=float)
+
+            if ncore > 0: D[:ncore, :ncore] = 2
+            D[ncore:ncore+ncas, ncore:ncore+ncas] = make_rdm1(ci, self.binary, self.SC1)
+
+            return D
+
         if with_core and with_vir:
 
             D = np.zeros((nmo, nmo), dtype=float)
@@ -854,7 +891,6 @@ class CASCI(mcscf.casci.CASCI):
             return D
         else:
             return make_rdm1(ci, self.binary, self.SC1)
-
 
     def make_rdm1s(self, state_id):
         """
@@ -936,9 +972,10 @@ class CASCI(mcscf.casci.CASCI):
 
 
 
-    def make_rdm12(self, state_id):
-        dm1 = self.make_rdm1(state_id)
-        dm2 = self.make_rdm2(state_id)
+    def make_rdm12(self, state_id, with_core=False):
+        dm1 = self.make_rdm1(state_id, with_core=with_core)
+        dm2 = self.make_rdm2(state_id, with_core=with_core)
+
         return dm1, dm2
 
     def spin_square(self, state_id=0):
@@ -1640,12 +1677,12 @@ if __name__ == "__main__":
     mf2 = mol2.RHF().run()
 
 
-    ncas, nelecas = (8,4)
+    ncas, nelecas = (4,4)
     # from pyqed.qchem import mcscf
     mc = CASCI(mf2, ncas, nelecas)
     mc.fix_spin()
 
-    mc.run(3, method='direct_ci')
+    mc.run(3, method='ci')
 
     # mc = CASCI(mf2, ncas, nelecas)
     # mc.run(3, mo_coeff=mf2.mo_coeff, purify_spin=True, shift=0.3)

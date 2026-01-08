@@ -9,8 +9,8 @@ import numpy as np
 from scipy.linalg import eigh
 # from pyqed.qchem.mcscf.casci import CASCI
 from opt_einsum import contract
-# from pyqed.qchem.mcscf.direct_ci import CASCI
-from pyqed.qchem.mcscf.casci import CASCI
+from pyqed.qchem.mcscf.direct_ci import CASCI
+# from pyqed.qchem.mcscf.casci import CASCI
 
 
 from pyqed.qchem.optimize import minimize
@@ -24,10 +24,10 @@ class CASSCF(CASCI):
 
 
     """
-    def __init__(self, mf, ncas, nelecas, **kwargs):
+    def __init__(self, mf, ncas, nelecas, max_cycles=30, **kwargs):
         super().__init__(mf, ncas, nelecas, **kwargs)
 
-        self.max_cycles = 20 # macroiterations
+        self.max_cycles = max_cycles # macroiterations
         self.tol = 1e-6 # energy tol
         self.mo_coeff = None # opt orb
 
@@ -74,8 +74,8 @@ class CASSCF(CASCI):
         for i in range(ncas+ncore):
             U0[i, i] = 1.
 
-        if nstates == 1:
-            C, mc = kernel(mc, U0, nelecas, ncas, C0, h1e, eri)
+        if nstates == 1: # ground state only 
+            C, mc = kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=self.max_cycles)
 
         elif nstates > 1:
 
@@ -176,12 +176,8 @@ def kernel(mc, U0, nelecas, ncas, C0, h1e, eri, max_cycles=30, tol=1e-6, **kwarg
     # U0 = np.zeros((nmo, ncas))
     # for i in range(ncas):
     #     U0[i, i] = 1
-
-    # print('xxx', h1e.shape, dm1.shape, dm2.shape, U0.shape)
     
     U, E = minimize(energy, U0, args=(h1e, eri, dm1, dm2))
-
-    print('U shape', U.shape, C0.shape)
 
     k = 0
 
@@ -367,7 +363,7 @@ if __name__=='__main__':
 
     mf = mol.RHF().run()
 
-    mc = CASSCF(mf, ncas=3, nelecas=4)
+    mc = CASSCF(mf, ncas=4, nelecas=4, max_cycles=50)
 
     # nstates = 2
     # mc.state_average(weights = np.ones(nstates)/nstates)

@@ -5,7 +5,7 @@ Created on Sun Oct  6 16:41:46 2024
 
 #####################################################
 
-#  main DMRG module using MPS/MPO representations
+main DMRG module using MPS/MPO representations
 
 ground state optimization
 
@@ -747,7 +747,7 @@ class MPO:
         pass
 
 
-# A @ B
+# apply_mpo_to_mps = apply_mpo
 
 def apply_mpo(w_list, B_list, chi_max):
     """
@@ -1091,7 +1091,7 @@ def coarse_grain_MPS(A,B):
     """
     # 2-1 coarse-graining of two-site MPS into one site
     #   |     |  |
-    #  -R- = -A--B-
+      -R- <= -A--B-
 
     Parameters
     ----------
@@ -1179,9 +1179,9 @@ class HamiltonianMultiply(sparse.linalg.LinearOperator):
         # so we split it into individual summations in the optimal order
         #R = np.einsum("aij,sik,abst,bkl->tjl",self.E,np.reshape(A, self.req_shape),
         #              self.W,self.F, optimize=True)
-        R = np.einsum("aij,sik->ajsk", self.E, np.reshape(A, self.req_shape))
-        R = np.einsum("ajsk,abst->bjtk", R, self.W)
-        R = np.einsum("bjtk,bkl->tjl", R, self.F)
+        R = np.einsum("aij,sik->ajsk", self.E, np.reshape(A, self.req_shape), optimize=True)
+        R = np.einsum("ajsk,abst->bjtk", R, self.W, optimize=True)
+        R = np.einsum("bjtk,bkl->tjl", R, self.F, optimize=True)
         return np.reshape(R, -1)
 
 ## optimize a single site given the MPO matrix W, and tensors E,F
@@ -1699,6 +1699,7 @@ if __name__ == '__main__':
     dmrg.init_guess = MPS
     dmrg.run()
 
+    
 
 
 

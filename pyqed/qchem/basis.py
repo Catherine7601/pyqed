@@ -19,6 +19,9 @@ import os
 import pyqed
 import re
 
+from numba import njit, vectorize, jit, int64, float64
+
+@njit(float64(int64, int64, int64, float64, float64, float64), parallel=True)
 def E(i,j,t,Qx,a,b):
     '''
     Recursive definition of Hermite Gaussian coefficients.
@@ -53,6 +56,7 @@ def E(i,j,t,Qx,a,b):
         (q*Qx/b)*E(i,j-1,t,Qx,a,b) + \
         (t+1)*E(i,j-1,t+1,Qx,a,b)
 
+@njit
 def overlap(a,lmn1,A,b,lmn2,B):
     ''' Evaluates overlap integral between two Gaussians
     Returns a float.
@@ -91,6 +95,7 @@ from scipy.special import factorial2
 from scipy.special import hyp1f1
 
 
+# @jit(int64(int64))
 def fact2(n: int):
     """
     double factorial n!!
@@ -119,7 +124,7 @@ def fact2(n: int):
         raise ValueError('Factorial2 is not defined for negative even number.')
 
 
-
+# @jit
 def boys(n,T):
     return hyp1f1(n+0.5,n+1.5,-T)/(2.0*n+1.0)
 
@@ -168,6 +173,7 @@ class ContractedGaussian(object):
         for ia in range(num_exps):
             self.coefs[ia] *= N
 
+@njit
 def kinetic(a,lmn1,A,b,lmn2,B):
     ''' Evaluates kinetic energy integral between two Gaussians
     Returns a float.
@@ -208,7 +214,7 @@ def T(a,b):
             b.exps[ib],b.shell,b.origin)
     return t
 
-
+# @jit
 def R(t,u,v,n,p,PCx,PCy,PCz,RPC):
     ''' Returns the Coulomb auxiliary Hermite integrals
     Returns a float.
@@ -238,9 +244,10 @@ def R(t,u,v,n,p,PCx,PCy,PCz,RPC):
         val += PCx*R(t-1,u,v,n+1,p,PCx,PCy,PCz,RPC)
     return val
 
-
+@njit
 def gaussian_product_center(a,A,b,B):
     return (a*A+b*B)/(a+b)
+
 
 def nuclear_attraction(a,lmn1,A,b,lmn2,B,C):
     ''' Evaluates kinetic energy integral between two Gaussians
@@ -291,6 +298,7 @@ def point_charge(a,b,C):
                 nuclear_attraction(a.exps[ia],a.shell,a.origin,
                 b.exps[ib],b.shell,b.origin,C)
     return v
+
 
 def electron_repulsion(a,lmn1,A,b,lmn2,B,c,lmn3,C,d,lmn4,D):
     ''' Evaluates kinetic energy integral between two Gaussians
@@ -643,16 +651,19 @@ if __name__=='__main__':
     # kin_e = np.trace(dm.dot(k_int1e))
     # print("Kinetic energy (Hartree):", kin_e)
 
+    import time
+
     # Define atomic symbols and coordinates (i.e., basis function centers)
-    atoms = ["H", "H"]
+    atoms = ["F", "F"]
     atcoords = np.array([[0.0, 0.0, 0.0], [0.0, 0.0, 1.0]])
     basis_dir = os.path.abspath(f'{pyqed.__file__}/../qchem/basis_set/')
 
     basis_dict = parse_gbs(basis_dir+'/6-31g.1.gbs')
     basis = make_contractions(basis_dict, atoms, atcoords, 'c')
 
-    print([g.exps for g in basis])
+    # print([g.exps for g in basis])
 
+    print(len(basis))
 
     # # To obtain the total number of AOs we compute the cartesian components for each angular momentum
     # total_ao = 0
@@ -703,9 +714,9 @@ if __name__=='__main__':
 
         eri = np.zeros((nao, nao, nao, nao))
         for p in range(nao):
-            for q in range(nao):
+            for q in range(p):
                 for r in range(nao):
-                    for s in range(nao):
+                    for s in range(r):
                         eri[p,q,r,s] = ERI(basis[p], basis[q], basis[r], basis[s])
 
         return s, t, v, eri
@@ -713,6 +724,13 @@ if __name__=='__main__':
     # print(basis[0].exps, basis[0].coefs)
     print(atcoords[1])
     print(point_charge(basis[0], basis[0], atcoords[1]))
+
+    start_time = time.time()
+    ao_ints(basis, atcoords)
+    end_time = time.time()
+
+    print(end_time-start_time)
+
     # s,t, v, eri = ao_ints(basis, atcoords)
     # print(t)
     # point_charge(a, a, myOrigin))

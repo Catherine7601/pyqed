@@ -16,16 +16,16 @@ from __future__ import division
 import os
 import sys
 import numpy
-from numpy import sin, cos, pi
+from numpy import pi
 from numpy.linalg import norm
 import numpy as np
 
-from gbasis.parsers import parse_gbs, make_contractions
-from gbasis.integrals.overlap import overlap_integral
-from gbasis.integrals.kinetic_energy import kinetic_energy_integral
-from gbasis.integrals.nuclear_electron_attraction import \
-nuclear_electron_attraction_integral
-from gbasis.integrals.electron_repulsion import electron_repulsion_integral
+# from gbasis.parsers import parse_gbs, make_contractions
+# from gbasis.integrals.overlap import overlap_integral
+# from gbasis.integrals.kinetic_energy import kinetic_energy_integral
+# from gbasis.integrals.nuclear_electron_attraction import \
+# nuclear_electron_attraction_integral
+# from gbasis.integrals.electron_repulsion import electron_repulsion_integral
 
 
 from pyqed import dag, au2angstrom
@@ -33,6 +33,18 @@ from pyqed.qchem.hf import RHF, UHF
 
 from periodictable import elements
 from pyscf import dft, scf, gto, ao2mo
+
+
+# import scipy.linalg as linalg
+# from scipy.optimize import newton
+
+# from pyscf.lib import logger
+# import pyscf.ao2mo
+# import pyscf
+# from functools import reduce
+from pyqed.qchem.basis import build
+
+
 
 # try:
 #     from cclib.parser.data import ccData
@@ -732,16 +744,6 @@ def fromfile(filename, format=None):
 #         """
 
 
-import scipy.linalg as linalg
-from scipy.optimize import newton
-
-# from pyscf.lib import logger
-import pyscf.ao2mo
-import pyscf
-from functools import reduce
-from pyqed.qchem.basis import build
-
-
 # from pyqed import eig_asymm, is_positive_def, dag
 
 
@@ -935,18 +937,41 @@ class Molecule:
         return self._nelec
 
 
-    def build(self):
+    def build(self, driver='gbasis'):
         """
         build molecular integrals
+        
+        Parameters 
+        ----------
+        driver : str 
+            external driver for AO integrals. Supported are 'gbasis' and 'pyscf'.
 
         Returns
         -------
         None.
 
         """
+        driver = driver.lower()
+        
+        if driver is None: 
+            pass 
+        elif driver == 'gbasis':
+            build(self)
+            
+        elif driver == 'pyscf':
+            # extract AO integrals from PySCF 
+            
+            mol = self.topyscf()
+            mol.build()
+            
+            self.nao = mol.nao
+            
+            kin = mol.intor('int1e_kin')
+            vnuc = mol.intor('int1e_nuc')
+            self.hcore =  kin + vnuc
 
-
-        build(self)
+            self.overlap = mol.intor('int1e_ovlp')
+            self.eri = mol.intor('int2e')
 
     def moment_integral(self, orders=None, center=np.array([0,0,0])):
         """
@@ -1396,7 +1421,8 @@ def readxyz(fname):
 def project_nac():
     pass
 
-def G():
+def metric():
+    # metric tensor of curvilinear coordinates
     pass
 
 def quasi_angular_momentum(mass, reference, changed):
@@ -1782,19 +1808,17 @@ if __name__ == '__main__':
 
     # import proplot as plt
 
-    from pyqed import Molecule
 
     # mol = gto.Mole()
     # mol.verbose = 3
-    atom = [['H' , (0,      0., 0.)],
-            ['H', (1.1, 0., 0.)],
-            ['H', (1.5, 0, 0)]]
+    atom = [['F' , (0,      0., 0.)],
+            ['Li', (0, 0., 2)]]
+            # ['H', (1.5, 0, 0)]]
     #mol.basis = {'Ne': '6-31G'}
     mol = Molecule(atom)
 
-    d = mol._build_distance_matrix()
-
-    print(d)
+    # d = mol._build_distance_matrix()
+    # print(d)
 
     # This is from G2/97 i.e. MP2/6-31G*
     # mol.atom = [['H' , (0,      0., 0.)],
@@ -1804,8 +1828,9 @@ if __name__ == '__main__':
 
 
 
-    mol.basis = 'sto3G'
-    mol.build()
+    mol.basis = '631g'
+    mol.build(driver='pyscf')
+
     mol.RHF().run()
 
     # print(mol.atom_symbols())
@@ -1840,19 +1865,19 @@ if __name__ == '__main__':
 
 
 
-    geometry2 = [['H' , (0.1,      0., 0.)],
-                ['H', (1.3, 0., 0.)],
-                ['H', (1.5, 0, 0)]]
+    # geometry2 = [['H' , (0.1,      0., 0.)],
+    #             ['H', (1.3, 0., 0.)],
+    #             ['H', (1.5, 0, 0)]]
 
-    mol2 = Molecule(atom=geometry2)
+    # mol2 = Molecule(atom=geometry2)
 
 
 
-    print(mol2.atom_coords().shape)
+    # print(mol2.atom_coords().shape)
     # print(mol2.com())
     # mol2.molecular_frame()
 
-    mol2.eckart_frame(mol.atom_coords())
+    # mol2.eckart_frame(mol.atom_coords())
 
     # print(mol.natm)
 
