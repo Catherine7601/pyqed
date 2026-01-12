@@ -419,21 +419,26 @@ def build(mol):
 
         raise NotImplementedError('Customized basis not supported yet.')
 
-    # To obtain the total number of AOs we check for each shell its angular momentum and coordinate type
-    total_ao = 0
-    for shell in basis:
-        if shell.coord_type == "cartesian":
-            total_ao += shell.angmom_components_cart.shape[0]
-        elif shell.coord_type == "spherical":
-            total_ao += len(shell.angmom_components_sph)
+    ####
+    ###  The count of total_ao from https://gbasis.qcdevs.org/tutorial/JCP_paper.html# does not seem to work with ccpvdz.
+    ####
+    # # To obtain the total number of AOs we check for each shell its angular momentum and coordinate type
+    # total_ao = 0
+    # for shell in basis:
+    #     if shell.coord_type == "cartesian":
+    #         total_ao += shell.angmom_components_cart.shape[0]
+    #     elif shell.coord_type == "spherical":
+    #         total_ao += len(shell.angmom_components_sph)
 
-    mol.nao = total_ao
+    # mol.nao = total_ao
 
-    print("Number of AOs = ", mol.nao)
 
     # compute overlap integrals in AO basis
     mol.overlap = overlap_integral(basis)
 
+    mol.nao = mol.overlap.shape[0]
+    
+    print("Number of AOs = ", mol.nao)
 
     # olp_mo = overlap_integral(basis, transform=mo_coeffs.T)
 
