@@ -1274,7 +1274,7 @@ def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6):
     F = construct_F(MPS, MPO, MPS)
     F.pop()
 
-    Eold = expect(MPS, MPO, MPS)
+    Eold = expect_mps(MPS, MPO, MPS)
 
     converged = False
 
