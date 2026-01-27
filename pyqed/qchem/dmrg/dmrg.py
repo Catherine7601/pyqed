@@ -511,10 +511,10 @@ class DMRGSCF(QCDMRG):
 
 if __name__=='__main__':
 
-    from pyqed.qchem.mcscf.direct_ci import CASCI
 
     np.set_printoptions(precision=10, suppress=True, threshold=10000, linewidth=300)
 
+    from pyqed.qchem.mcscf.direct_ci import CASCI
 
     mol = Molecule(atom = [
         ['H' , (0. , 0. , 0)],
