@@ -30,6 +30,12 @@ from scipy.sparse.linalg import eigsh #Lanczos diagonalization for hermitian mat
 
 # from pyqed.mps.mps import LeftCanonical, RightCanonical, ZipperLeft, ZipperRight
 from pyqed.mps.decompose import decompose, compress
+try:
+    from pyqed.mps.symmetry import BlockTensor, tensordot, solve_davidson
+    SYMMETRY_AVAILABLE = True
+except ImportError:
+    SYMMETRY_AVAILABLE = False
+    BlockTensor = None
 from scipy.linalg import expm, block_diag
 import warnings
 
@@ -75,6 +81,191 @@ def SpinHalfFermionOperators(filling=1.):
                Sx=Sx, Sy=Sy, Sz=Sz, Sp=Sp, Sm=Sm)  # yapf: disable
     return ops
 
+def svd_symmetric(AA, cutoff=1e-10, m_max=None):
+
+    AA_perm = AA.transpose(0, 2, 1, 3)
+
+    blocks_by_q_mid = {}
+    row_map = {}
+    col_map = {}
+
+    for qn_tuple, block in AA_perm.data.items():
+        q_L, q_phys_L, q_R, q_phys_R = qn_tuple
+
+        # charge flow
+        q_mid = q_L + q_phys_L
+
+        blocks_by_q_mid.setdefault(q_mid, [])
+        row_map.setdefault(q_mid, set())
+        col_map.setdefault(q_mid, set())
+
+        blocks_by_q_mid[q_mid].append((qn_tuple, block))
+        row_map[q_mid].add((q_L, q_phys_L))
+        col_map[q_mid].add((q_R, q_phys_R))
+
+    # Storage
+    sv_list = []   # (s, q_mid, local_index)
+    U_store = {}
+    V_store = {}
+
+    for q_mid, entries in blocks_by_q_mid.items():
+        rows = sorted(row_map[q_mid])
+        cols = sorted(col_map[q_mid])
+
+        r_starts, c_starts = {}, {}
+        r_dim = c_dim = 0
+
+        for r in rows:
+            for qn, blk in entries:
+                if (qn[0], qn[1]) == r:
+                    r_starts[r] = r_dim
+                    r_dim += blk.shape[0] * blk.shape[1]
+                    break
+
+        for c in cols:
+            for qn, blk in entries:
+                if (qn[2], qn[3]) == c:
+                    c_starts[c] = c_dim
+                    c_dim += blk.shape[2] * blk.shape[3]
+                    break
+
+        M = np.zeros((r_dim, c_dim), dtype=entries[0][1].dtype)
+
+        for qn, blk in entries:
+            r0 = r_starts[(qn[0], qn[1])]
+            c0 = c_starts[(qn[2], qn[3])]
+            M[r0:r0+blk.shape[0]*blk.shape[1],
+              c0:c0+blk.shape[2]*blk.shape[3]] = blk.reshape(
+                  blk.shape[0]*blk.shape[1],
+                  blk.shape[2]*blk.shape[3]
+              )
+
+        U, S, Vt = np.linalg.svd(M, full_matrices=False)
+
+        for i, s in enumerate(S):
+            sv_list.append((s, q_mid, i))
+
+        U_store[q_mid] = (U, rows, r_starts, entries)
+        V_store[q_mid] = (Vt, cols, c_starts, entries)
+
+    # GLOBAL truncation with bookkeeping
+    sv_list.sort(reverse=True, key=lambda x: x[0])
+    if m_max is not None:
+        sv_list = sv_list[:m_max]
+
+    kept = {}
+    for s, q_mid, i in sv_list:
+        kept.setdefault(q_mid, []).append(i)
+
+    final_U = {}
+    final_V = {}
+
+    for q_mid, idxs in kept.items():
+        U, rows, r_starts, entries = U_store[q_mid]
+        Vt, cols, c_starts, entries = V_store[q_mid]
+
+        for r in rows:
+            for qn, blk in entries:
+                if (qn[0], qn[1]) == r:
+                    d1, d2 = blk.shape[0], blk.shape[1]
+                    break
+            r0 = r_starts[r]
+            ublk = U[r0:r0+d1*d2, idxs].reshape(d1, d2, len(idxs))
+            final_U[(r[0], r[1], q_mid)] = ublk
+
+        for c in cols:
+            for qn, blk in entries:
+                if (qn[2], qn[3]) == c:
+                    d3, d4 = blk.shape[2], blk.shape[3]
+                    break
+            c0 = c_starts[c]
+            vblk = Vt[idxs, c0:c0+d3*d4].reshape(len(idxs), d3, d4)
+            final_V[(q_mid, c[0], c[1])] = vblk
+
+    bond_qns = []
+    for q_mid, idxs in kept.items():
+        bond_qns.extend([q_mid] * len(idxs))
+
+    # Original qns from AA
+    qns_L      = AA_perm.qns[0]
+    qns_pL     = AA_perm.qns[1]
+    qns_R      = AA_perm.qns[2]
+    qns_pR     = AA_perm.qns[3]
+
+    # ----------------------------
+    # Construct tensors
+    # ----------------------------
+    U = BlockTensor(
+        final_U,
+        qns=[qns_L, qns_pL, bond_qns],
+        dirs=[AA_perm.dirs[0], AA_perm.dirs[1], 1]
+    )
+
+    V = BlockTensor(
+        final_V,
+        qns=[bond_qns, qns_R, qns_pR],
+        dirs=[-1, AA_perm.dirs[2], AA_perm.dirs[3]]
+    )
+
+    return U, V, 0.0, sum(len(v) for v in kept.values())
+
+
+
+class HamiltonianMultiplyU1:
+    """
+    Symmetric version of HamiltonianMultiply using BlockTensor.
+    """
+    def __init__(self, E, W, F):
+        self.E = E
+        self.W = W
+        self.F = F
+        self.dtype = np.float64 
+
+    def matvec(self, A):
+        # A is BlockTensor with indices (Left, Right, Phys_L, Phys_R)
+        # E: (MPO_L, MPS_L, MPS_L')
+        # W: (MPO_L, MPO_R, Phys_Out, Phys_In)
+        # F: (MPO_R, MPS_R, MPS_R')
+        
+        # 1. Contract E with A
+        # E indices: (a, i, j) -> (MPO, Bra, Ket)
+        # A indices: (j, k, s1, s2) -> (Left, Right, PhysL, PhysR)
+        # Contract E[Ket] with A[Left] -> E[2] with A[0]
+        # Result R: (a, i, k, s1, s2)
+        R = tensordot(self.E, A, axes=([2], [0]))
+        
+        # 2. Contract R with W1 (Left Site)
+        # W1: (a, b, s1', s1) -> (Left, Right, Out, In)
+        # R: (a, i, k, s1, s2)
+        # Contract R[MPO_L]=R[0] with W1[Left]=W1[0]
+        # Contract R[Phys1]=R[3] with W1[In]=W1[3]
+        T2 = tensordot(R, self.W[0], axes=([0, 3], [0, 3]))
+        # T2: (i, k, s2, b, s1') -> (Bra_L, Right, PhysR, MPO_R, PhysL_Out)
+        
+        # 3. Contract T2 with W2 (Right Site)
+        # W2: (b, c, s2', s2) -> (Left, Right, Out, In)
+        # T2: (i, k, s2, b, s1')
+        # Contract T2[MPO_R]=T2[3] with W2[Left]=W2[0]
+        # Contract T2[PhysR]=T2[2] with W2[In]=W2[3]
+        T3 = tensordot(T2, self.W[1], axes=([3, 2], [0, 3]))
+        # T3: (i, k, s1', c, s2') -> (Bra_L, Right, PhysL_Out, MPO_R, PhysR_Out)
+        
+        # 4. Contract T3 with F
+        # F: (c, k, l) -> (MPO_R, Bra_R, Ket_R)
+        # contract T3[Right]=T3[1] (which corresponds to A's Right/Ket) 
+        # with F[Ket]=F[2].
+        # And T3[MPO_R]=T3[3] with F[MPO]=F[0].
+        T4 = tensordot(T3, self.F, axes=([3, 1], [0, 2])) 
+        # Result indices: (i, s1', s2', l) -> (Bra_L, PhysL_Out, PhysR_Out, Bra_R)
+        
+        # 5. Transpose to match A structure (Left, Right, PhysL, PhysR)
+        # Current: (Bra_L, PhysL, PhysR, Bra_R) -> (0, 1, 2, 3)
+        # Target: (Bra_L, Bra_R, PhysL, PhysR) -> (0, 3, 1, 2)
+        A_new = T4.transpose(0, 3, 1, 2)
+        
+        return A_new
+
+
 
 class MPS:
     def __init__(self, Bs, Ss=None, homogenous=True, bc='finite', form="B"):
@@ -97,14 +288,48 @@ class MPS:
         self.bc = bc
         self.L = len(Bs)
         self.nbonds = self.L - 1 if self.bc == 'open' else self.L
-
+        self.gauge = None
 
         self.data = self.factors = Bs
-        # self.nsites = self.L = len(mps)
+        
+        # --- ROBUST DIM CALCULATION FOR BLOCKTENSORS ---
         if homogenous:
-            self.dim = Bs[0].shape[1]
+            try:
+                self.dim = Bs[0].shape[1]
+            except TypeError:
+                # Fallback for BlockTensor if .shape property fails due to QN format mismatch
+                # Assumes Bs[0] is (Left, Phys, Right) or (Left, Right, Phys)?
+                # Standard MPS in this code seems to be (ChiL, d, ChiR) -> Axis 1 is Physical.
+                # We iterate data to sum up dimensions of unique physical QNs.
+                if hasattr(Bs[0], 'data'):
+                    # Data keys are usually (q_L, q_phys, q_R) or similar
+                    # For a standard MPS block (L, P, R), axis 1 is phys.
+                    # We map unique q_phys to their dimension.
+                    phys_dims = {}
+                    for key, block in Bs[0].data.items():
+                        # Key structure depends on the tensor. Assuming (q0, q1, q2)
+                        q_p = key[1] 
+                        if q_p not in phys_dims:
+                            phys_dims[q_p] = block.shape[1]
+                    self.dim = sum(phys_dims.values())
+                else:
+                    self.dim = 0 # Should not happen
         else:
-            self.dims = [B.shape[1] for B in Bs] # physical dims of each site
+            # Similar logic for inhomogeneous
+            self.dims = []
+            for B in Bs:
+                try:
+                    self.dims.append(B.shape[1])
+                except TypeError:
+                    if hasattr(B, 'data'):
+                        phys_dims = {}
+                        for key, block in B.data.items():
+                            q_p = key[1]
+                            if q_p not in phys_dims:
+                                phys_dims[q_p] = block.shape[1]
+                        self.dims.append(sum(phys_dims.values()))
+                    else:
+                        self.dims.append(0)
 
         # self._mpo = None
 
@@ -115,7 +340,20 @@ class MPS:
         """
         Return bond dimensions.
         """
-        return [self.Bs[i].shape[2] for i in range(self.nbonds)]
+        try:
+            return [self.Bs[i].shape[2] for i in range(self.nbonds)]
+        except TypeError:
+             # Fallback for BlockTensor bond dims (Axis 2)
+             bonds = []
+             for i in range(self.nbonds):
+                 B = self.Bs[i]
+                 bond_dims = {}
+                 for key, block in B.data.items():
+                     q_r = key[2]
+                     if q_r not in bond_dims:
+                         bond_dims[q_r] = block.shape[2]
+                 bonds.append(sum(bond_dims.values()))
+             return bonds
 
     # def decompose(self, chi_max):
     #     pass
@@ -301,8 +539,332 @@ class MPS:
 
     def compress(self, chi_max):
         return MPS(compress(self.factors, chi_max)[0])
+    
+    def calc_1site_rdm(self, idx=None):
+        """
+        Calculate 1-site reduced density matrices.
 
+        Dense (numpy) MPS path: uses the existing implementation assuming tensors
+        are ordered as (phys, chi_L, chi_R).
 
+        U(1) (BlockTensor) path: builds left/right overlap environments using the
+        same contraction logic as the DMRG sweeps (contract_from_left/right),
+        but leaves the physical indices at the target site open.
+        Returns *dense* (numpy) d×d matrices for convenience.
+        """
+        import numpy as np
+
+        if idx is None:
+            idx = list(range(self.L))
+        elif isinstance(idx, int):
+            idx = [idx]
+        elif isinstance(idx, (list, tuple)):
+            idx = list(idx)
+        else:
+            raise ValueError("idx must be None, int, list, or tuple")
+
+        if self.L == 0:
+            return {}
+
+        # U(1) BlockTensor way of 1-rdm calculation
+        if SYMMETRY_AVAILABLE and isinstance(self.Bs[0], BlockTensor):
+
+            def _make_id_mpo_from_phys_qns(phys_qns):
+                # phys_qns is a list with length d (may contain duplicates for degeneracy)
+                from collections import defaultdict
+                idxs_by_q = defaultdict(list)
+                for k, q in enumerate(list(phys_qns)):
+                    idxs_by_q[q].append(k)
+
+                data = {}
+                for q, ks in idxs_by_q.items():
+                    d = len(ks)
+                    # block for (L=0,R=0,Out=q,In=q): shape (1,1,d,d)
+                    data[(0, 0, q, q)] = np.eye(d).reshape(1, 1, d, d)
+
+                qns = [[0], [0], list(phys_qns), list(phys_qns)]
+                # Conventional MPO directions (bondL, bondR, out, in)
+                dirs = [1, -1, 1, -1]
+                return BlockTensor(data, qns, dirs)
+
+            def _blockmat_to_dense(rho_bt, phys_qns):
+                # rho_bt is a 2-index BlockTensor over physical indices
+                d = len(phys_qns)
+                out = np.zeros((d, d), dtype=complex)
+
+                # map q -> positions in the physical basis ordering
+                from collections import defaultdict
+                pos = defaultdict(list)
+                for k, q in enumerate(list(phys_qns)):
+                    pos[q].append(k)
+
+                for (q0, q1), blk in rho_bt.data.items():
+                    rows = pos[q0]
+                    cols = pos[q1]
+                    # blk is (len(rows), len(cols))
+                    for a, ra in enumerate(rows):
+                        for b, cb in enumerate(cols):
+                            out[ra, cb] = blk[a, b]
+                return out
+
+            # Build an identity MPO list (bond dims 1) just to trace out other sites correctly.
+            W_id = []
+            for s in range(self.L):
+                # physical qns live on index 2 for MPS tensors in this code path (L,R,Phys)
+                phys_qns = self.Bs[s].qns[2]
+                W_id.append(_make_id_mpo_from_phys_qns(phys_qns))
+
+            # Build left overlap environments E[s] for bond left of site s
+            E = [None] * self.L
+            E[0] = initial_E(W_id[0])
+            for s in range(0, self.L - 1):
+                E[s + 1] = contract_from_left(W_id[s], self.Bs[s], E[s], self.Bs[s])
+
+            # Build right overlap environments R[s] for bond right of site s
+            R = [None] * self.L
+            qs = sorted({key[1] for key in self.Bs[-1].data.keys()})
+            if len(qs) != 1:
+                raise ValueError(f"Ambiguous total charge on last bond: {qs}.")
+            target_qn = qs[0]
+            R[-1] = initial_F(W_id[-1], target_qn=target_qn)
+            for s in range(self.L - 1, 0, -1):
+                R[s - 1] = contract_from_right(W_id[s], self.Bs[s], R[s], self.Bs[s])
+
+            rdm = {}
+            for s in idx:
+                # L: (wL, bra_L, ket_L),  B: (ket_L, ket_R, phys)
+                t1 = tensordot(E[s], self.Bs[s], axes=([2], [0]))          # (wL, bra_L, ket_R, phys)
+                # R: (wR, bra_R, ket_R)
+                t2 = tensordot(t1, R[s], axes=([2], [2]))                  # (wL, bra_L, phys, wR, bra_R)
+                # B*: (bra_L, bra_R, phys')
+                rho4 = tensordot(t2, self.Bs[s].conj(), axes=([1, 4], [0, 1]))  # (wL, phys, wR, phys')
+
+                # Squeeze singleton MPO bond dims (they are always 1 here)
+                data2 = {}
+                for (qwL, qP, qwR, qPp), blk in rho4.data.items():
+                    # blk shape (1, dP, 1, dPp) -> (dP, dPp)
+                    data2[(qP, qPp)] = blk.reshape(blk.shape[1], blk.shape[3])
+                phys_qns = self.Bs[s].qns[2]
+                rho2 = BlockTensor(data2, [list(phys_qns), list(phys_qns)], [1, -1])
+
+                rho_dense = _blockmat_to_dense(rho2, phys_qns)
+                tr = np.trace(rho_dense)
+                if abs(tr) > 0:
+                    rho_dense = rho_dense / tr   # enforce Tr(rho)=1
+                rdm[s] = rho_dense
+
+            return rdm
+
+        # 1-rdm calculation without U(1)
+        # 1. Build Left Environments (L_env[i] is contraction of 0...i-1)
+        L_env = [np.array([[1.0]])]
+        curr_L = L_env[0]
+        for i in range(self.L - 1):
+            # L(bra_L,ket_L) * B(p,ket_L,ket_R) -> temp(bra_L,p,ket_R)
+            temp = np.tensordot(curr_L, self.Bs[i], axes=(1, 1))
+            # temp(bra_L,p,ket_R) * B*(p,bra_L,bra_R) -> curr_L(ket_R,bra_R)
+            curr_L = np.tensordot(temp, self.Bs[i].conj(), axes=([0, 1], [1, 0]))
+            curr_L = curr_L.T
+            L_env.append(curr_L)
+
+        # 2. Build Right Environments (R_env[i] is contraction of i+1...L-1)
+        R_env = [None] * self.L
+        curr_R = np.array([[1.0]])
+        R_env[-1] = curr_R
+        for i in range(self.L - 1, 0, -1):
+            # B(p,chiL,chiR) * R(bra_R,ket_R) -> temp(p,chiL,bra_R)
+            temp = np.tensordot(self.Bs[i], curr_R, axes=(2, 1))
+            # temp(p,chiL,bra_R) * B*(p,bra_L,bra_R) -> curr_R(chiL,bra_L)
+            curr_R = np.tensordot(temp, self.Bs[i].conj(), axes=([0, 2], [0, 2])).T
+            R_env[i - 1] = curr_R
+
+        rdm = {}
+        for i in idx:
+            t1 = np.tensordot(L_env[i], self.Bs[i], axes=(1, 1))
+            t2 = np.tensordot(t1, R_env[i], axes=(2, 1))
+            rho = np.tensordot(t2, self.Bs[i].conj(), axes=([0, 2], [1, 2]))
+            rdm[i] = rho
+
+        return rdm
+
+    def calc_2site_rdm(self, idx_pairs=None):
+        """
+        Calculate 2-site reduced density matrices.
+        """
+        import numpy as np
+        from collections import defaultdict
+
+        # Helper for build identity on a bond for BlockTensor envs
+        def _bond_eye(qns_bond, dir0=1):
+            idxs_by_q = defaultdict(list)
+            for k, q in enumerate(qns_bond):
+                idxs_by_q[q].append(k)
+            data = {}
+            for q, ks in idxs_by_q.items():
+                data[(q, q)] = np.eye(len(ks), dtype=complex)
+            return BlockTensor(data, [list(qns_bond), list(qns_bond)], [dir0, -dir0])
+
+        # Helper for densify a BlockTensor
+        def _bt_to_dense(bt):
+            maps = []
+            for qlist in bt.qns:
+                m = defaultdict(list)
+                for i, q in enumerate(qlist):
+                    m[q].append(i)
+                maps.append(m)
+            shape = tuple(len(q) for q in bt.qns)
+            out = np.zeros(shape, dtype=complex)
+            for qkey, block in bt.data.items():
+                idx_lists = [maps[leg][qkey[leg]] for leg in range(bt.rank)]
+                out[np.ix_(*idx_lists)] += block
+            return out
+
+        # Normalize idx_pairs
+        if idx_pairs is None:
+            pairs_by_i = {i: list(range(i + 1, self.L)) for i in range(self.L)}
+        else:
+            if isinstance(idx_pairs, tuple) and len(idx_pairs) == 2:
+                idx_pairs = [idx_pairs]
+            pairs_by_i = defaultdict(list)
+            for (i, j) in idx_pairs:
+                if i == j: continue
+                a, b = (i, j) if i < j else (j, i)
+                pairs_by_i[a].append(b)
+            for i in pairs_by_i:
+                pairs_by_i[i] = sorted(set(pairs_by_i[i]))
+
+        # 2-rdm calculation with U(1) off
+        if not (SYMMETRY_AVAILABLE and isinstance(self.Bs[0], BlockTensor)):
+            # 1) Build overlap environments
+            L_env = [np.array([[1.0]])]
+            curr_L = L_env[0]
+            for i in range(self.L - 1):
+                temp = np.tensordot(curr_L, self.Bs[i], axes=(1, 1))
+                curr_L = np.tensordot(temp, self.Bs[i].conj(), axes=([0, 1], [1, 0])).T
+                L_env.append(curr_L)
+
+            R_env = [None] * self.L
+            curr_R = np.array([[1.0]])
+            R_env[-1] = curr_R
+            for i in range(self.L - 1, 0, -1):
+                temp = np.tensordot(self.Bs[i], curr_R, axes=(2, 1))
+                curr_R = np.tensordot(temp, self.Bs[i].conj(), axes=([0, 2], [0, 2])).T
+                R_env[i - 1] = curr_R
+
+            # 2) Precompute components
+            L_components = []
+            for i in range(self.L):
+                t = np.tensordot(L_env[i], self.Bs[i], axes=(1, 1))
+                comp = np.tensordot(t, self.Bs[i].conj(), axes=(0, 1))
+                comp = comp.transpose(0, 2, 3, 1)
+                L_components.append(comp)
+
+            R_components = []
+            for i in range(self.L):
+                t = np.tensordot(self.Bs[i], R_env[i], axes=(2, 1))
+                comp = np.tensordot(t, self.Bs[i].conj(), axes=(2, 2))
+                comp = comp.transpose(0, 2, 3, 1)
+                R_components.append(comp)
+
+            # 3) Assemble
+            rdm = {}
+            for i in range(self.L):
+                js = pairs_by_i.get(i, [])
+                if not js: continue
+
+                tensor = L_components[i]
+                max_j = max(js)
+                for j in range(i + 1, max_j + 1):
+                    if j > i + 1:
+                        k = j - 1
+                        tensor = np.tensordot(tensor, self.Bs[k], axes=(3, 1))
+                        tensor = np.tensordot(tensor, self.Bs[k].conj(), axes=([2, 3], [1, 0]))
+                        tensor = tensor.transpose(0, 1, 3, 2)
+
+                    if j in js:
+                        # FIX: Use np.tensordot explicitly here (not the symmetric one)
+                        rho_ij = np.tensordot(tensor, R_components[j], axes=([2, 3], [2, 3]))
+                        rho_ij = rho_ij.transpose(0, 2, 1, 3)
+
+                        d_i, d_j = rho_ij.shape[0], rho_ij.shape[1]
+                        
+                        # Normalize
+                        rho_mat = rho_ij.reshape(d_i * d_j, d_i * d_j)
+                        tr = np.trace(rho_mat)
+                        if abs(tr) > 1e-12:
+                            rho_mat /= tr
+                            
+                        rdm[(i, j)] = rho_mat
+
+            return rdm
+
+        # U(1) = True BRANCH (BlockTensors)
+        # 1) Build overlap environments
+        L_env = []
+        curr_L = _bond_eye(self.Bs[0].qns[0], dir0=self.Bs[0].dirs[0])
+        L_env.append(curr_L)
+        for i in range(self.L - 1):
+            temp = tensordot(curr_L, self.Bs[i], axes=([1], [0]))
+            curr_L = tensordot(temp, self.Bs[i].conj(), axes=([0, 2], [0, 2]))
+            curr_L = curr_L.transpose(1, 0)
+            L_env.append(curr_L)
+
+        R_env = [None] * self.L
+        curr_R = _bond_eye(self.Bs[-1].qns[1], dir0=self.Bs[-1].dirs[1])
+        R_env[-1] = curr_R
+        for i in range(self.L - 1, 0, -1):
+            temp = tensordot(self.Bs[i], curr_R, axes=([1], [1]))
+            curr_R = tensordot(temp, self.Bs[i].conj(), axes=([2, 1], [1, 2]))
+            curr_R = curr_R.transpose(1, 0)
+            R_env[i - 1] = curr_R
+
+        # 2) Precompute components
+        L_components = []
+        for i in range(self.L):
+            t = tensordot(L_env[i], self.Bs[i], axes=([1], [0]))
+            comp = tensordot(t, self.Bs[i].conj(), axes=([0], [0]))
+            comp = comp.transpose(1, 3, 2, 0)
+            L_components.append(comp)
+
+        R_components = []
+        for i in range(self.L):
+            t = tensordot(self.Bs[i], R_env[i], axes=([1], [1]))
+            comp = tensordot(t, self.Bs[i].conj(), axes=([2], [1]))
+            comp = comp.transpose(1, 3, 2, 0)
+            R_components.append(comp)
+
+        # 3) Assemble
+        rdm = {}
+        for i in range(self.L):
+            js = pairs_by_i.get(i, [])
+            if not js: continue
+
+            tensor = L_components[i]
+            max_j = max(js)
+
+            for j in range(i + 1, max_j + 1):
+                if j > i + 1:
+                    k = j - 1
+                    tensor = tensordot(tensor, self.Bs[k], axes=([3], [0]))
+                    tensor = tensordot(tensor, self.Bs[k].conj(), axes=([2, 4], [0, 2]))
+                    tensor = tensor.transpose(0, 1, 3, 2)
+
+                if j in js:
+                    rho_ij = tensordot(tensor, R_components[j], axes=([2, 3], [2, 3]))
+                    rho_ij = rho_ij.transpose(0, 2, 1, 3)
+
+                    rho_dense = _bt_to_dense(rho_ij)
+                    d_i, d_j = rho_dense.shape[0], rho_dense.shape[1]
+                    
+                    # Normalize
+                    rho_mat = rho_dense.reshape(d_i * d_j, d_i * d_j)
+                    tr = np.trace(rho_mat)
+                    if abs(tr) > 1e-12:
+                        rho_mat /= tr
+
+                    rdm[(i, j)] = rho_mat
+
+        return rdm
 
 
 class Site(object):
@@ -443,20 +1005,20 @@ class Block(Site):
            [ 0.,  1.]])}
     """
     def __init__(self, dim):
-        	"""Creates an empty block of dimension dim.
+        """Creates an empty block of dimension dim.
 
-        	Raises
-        	------
-        	DMRGException
-        	     if `dim` < 1.
+        Raises
+        ------
+        DMRGException
+                if `dim` < 1.
 
-        	Notes
-        	-----
-        	Postcond : The identity operator (ones in the diagonal, zeros elsewhere)
-        	is added to the `self.operators` dictionary. A full of zeros block
-        	Hamiltonian operator is added to the list.
-        	"""
-        	super(Block, self).__init__(dim)
+        Notes
+        -----
+        Postcond : The identity operator (ones in the diagonal, zeros elsewhere)
+        is added to the `self.operators` dictionary. A full of zeros block
+        Hamiltonian operator is added to the list.
+        """
+        super(Block, self).__init__(dim)
 
 class PauliSite(Site):
     """
@@ -912,14 +1474,120 @@ def expect_zipper_right(mpo, mps):
 
 ## initial E and F matrices for the left and right vacuum states
 def initial_E(W):
-    E = np.zeros((W.shape[0],1,1))
+    if SYMMETRY_AVAILABLE and isinstance(W, BlockTensor):
+        # MPO (In), Bra (In), Ket (In) -> Need Out (+1)
+        data = {(0, 0, 0): np.ones((1, 1, 1))}
+        qns = [[0], [0], [0]]
+        dirs = [1, -1, 1] 
+        return BlockTensor(data, qns, dirs)
+    E = np.zeros((W.shape[0], 1, 1))
     E[0] = 1
     return E
 
-def initial_F(W):
-    F = np.zeros((W.shape[1],1,1))
+def initial_F(W, target_qn=0):
+    """
+    Constructs the initial Right Environment (Vacuum).
+    """
+    if SYMMETRY_AVAILABLE and isinstance(W, BlockTensor):
+        # MPO (In), Bra (Out), Ket (In) -> Need [In, Out, In] = [-1, 1, -1]
+        data = {(0, target_qn, target_qn): np.ones((1, 1, 1))}
+        qns = [[0], [target_qn], [target_qn]]
+        dirs = [-1, 1, -1]
+        return BlockTensor(data, qns, dirs)
+    F = np.zeros((W.shape[1], 1, 1))
     F[-1] = 1
     return F
+
+
+def dense_to_symmetric(mps_list, phys_qns=None, tol=1e-12):
+    """
+    Convert a *product-state* dense MPS guess into a true U(1) BlockTensor MPS.
+
+    Supports:
+      - spin-orbital sites: d=2, phys_qns=[0,1]
+      - spatial-orbital sites: d=4, phys_qns=[0,1,1,2]
+
+    Requirement:
+      - product state only (bond dims must be 1 at every site)
+      - each site must have support in exactly one charge sector
+    """
+    if not SYMMETRY_AVAILABLE:
+        return mps_list
+
+    import numpy as np
+
+    # Infer phys_qns from d if not given
+    if phys_qns is None:
+        # peek at first site to infer d
+        M0 = np.asarray(mps_list[0])
+        if M0.ndim != 3:
+            raise ValueError(f"Expected rank-3 tensors, got shape {M0.shape}")
+        # extract d from any axis that looks like physical for product tensors
+        d_candidates = sorted(set(M0.shape))
+        # more robust: just take the axis that isn't 1 if it's product state
+        d = next((x for x in M0.shape if x != 1), None)
+        if d is None:
+            d = M0.shape[-1]
+
+        if d == 2:
+            phys_qns = [0, 1]
+        elif d == 4:
+            phys_qns = [0, 1, 1, 2]
+        else:
+            raise ValueError(f"Cannot infer phys_qns for local dimension d={d}. Pass phys_qns explicitly.")
+    phys_qns = list(phys_qns)
+    new_list = []
+
+    qL = 0  # cumulative charge to the left
+
+    for site, M in enumerate(mps_list):
+        M = np.asarray(M)
+        if M.ndim != 3:
+            raise ValueError(f"Site {site}: expected rank-3 tensor, got shape {M.shape}")
+
+        # extract local vector v[d] from product state tensor
+        if M.shape[0] == 1 and M.shape[1] == 1:      # (L,R,P)
+            v = M[0, 0, :]
+        elif M.shape[1] == 1 and M.shape[2] == 1:    # (P,L,R)
+            v = M[:, 0, 0]
+        elif M.shape[0] == 1 and M.shape[2] == 1:    # (L,P,R)
+            v = M[0, :, 0]
+        else:
+            raise ValueError(
+                f"Site {site}: only supports product-state tensors with bond dims 1. Got {M.shape}."
+            )
+
+        d = len(v)
+        if d != len(phys_qns):
+            raise ValueError(f"Site {site}: local dim d={d} but phys_qns length={len(phys_qns)}")
+
+        supp = [k for k, amp in enumerate(v) if abs(amp) > tol]
+        if not supp:
+            raise ValueError(f"Site {site}: zero local vector.")
+
+        q_support = sorted(set(phys_qns[k] for k in supp))
+        if len(q_support) != 1:
+            raise ValueError(
+                f"Site {site}: local state spans multiple charge sectors {q_support}. "
+                "Provide a fixed-charge product guess (or implement a general converter)."
+            )
+
+        qP = q_support[0]
+        qR = qL + qP
+
+        idxs = [k for k, q in enumerate(phys_qns) if q == qP]
+        vec = v[idxs].astype(complex)
+
+        block = vec.reshape(1, 1, len(idxs))
+        data = {(qL, qR, qP): block}
+
+        qns = [[qL], [qR], list(phys_qns)]
+        dirs = [-1, 1, 1]  # keep your convention
+
+        new_list.append(BlockTensor(data, qns, dirs))
+        qL = qR
+
+    return new_list
 
 
 def contract_from_right(W, A, F, B):
@@ -952,11 +1620,26 @@ def contract_from_right(W, A, F, B):
         DESCRIPTION.
 
     """
-
-    Temp = np.einsum("sij,bjl->sbil", A, F)
-    Temp = np.einsum("sbil,abst->tail", Temp, W)
-    return np.einsum("tail,tkl->aik", Temp, B)
-
+    if SYMMETRY_AVAILABLE and isinstance(A, BlockTensor):
+        # F: (MPO, Bra, Ket). A_bra: A.conj().
+        # Contract F.Bra(1) with A.conj().Right(1)
+        Temp = tensordot(A.conj(), F, axes=([1], [1]))
+        
+        # Contract with W (L, R, Out, In)
+        # Contract Temp.MPO(2) with W.Right(1)
+        # Contract Temp.P(1) with W.Out(2)
+        Temp = tensordot(Temp, W, axes=([2, 1], [1, 2])) 
+        
+        # Contract with B(Ket): (L, R, P)
+        # Contract Temp.Ket(1) with B.Right(1)
+        # Contract Temp.In_W(3) with B.Phys(2)
+        Temp = tensordot(Temp, B, axes=([1, 3], [1, 2])) 
+        
+        return Temp.transpose(1, 0, 2)
+    else:
+        Temp = np.einsum("sij,bjl->sbil", A, F)
+        Temp = np.einsum("sbil,abst->tail", Temp, W)
+        return np.einsum("tail,tkl->aik", Temp, B)
 
 def contract_from_left(W, A, E, B):
     """
@@ -989,12 +1672,29 @@ def contract_from_left(W, A, E, B):
 
     """
 
-    Temp = np.einsum("sij,aik->sajk", A, E)
-    Temp = np.einsum("sajk,abst->tbjk", Temp, W)
-    return np.einsum("tbjk,tkl->bjl", Temp, B)
+    if SYMMETRY_AVAILABLE and isinstance(A, BlockTensor):
+        # E: (MPO, Bra, Ket). A_bra: A.conj().
+        # Contract E.Bra(1) with A.conj().Left(0)
+        Temp = tensordot(E, A.conj(), axes=([1], [0])) 
+        
+        # Contract with W (L, R, Out, In)
+        # Contract Temp.MPO(0) with W.Left(0)
+        # Contract Temp.P(3) with W.Out(2)
+        Temp = tensordot(Temp, W, axes=([0, 3], [0, 2])) 
+        
+        # Contract with B (L, R, P)
+        # Contract Temp.Ket(0) with B.Left(0)
+        # Contract Temp.W_In(3) with B.Phys(2)
+        Temp = tensordot(Temp, B, axes=([0, 3], [0, 2])) 
+        
+        return Temp.transpose(1, 0, 2)
+    else:
+        Temp = np.einsum("sij,aik->sajk", A, E)
+        Temp = np.einsum("sajk,abst->tbjk", Temp, W)
+        return np.einsum("tbjk,tkl->bjl", Temp, B)
 
 
-def construct_F(Alist, MPO, Blist):
+def construct_F(Alist, MPO, Blist, target_qn = None):
     """
     # construct the initial E and F matrices.
     # we choose to start from the left hand side, so the initial E matrix
@@ -1015,8 +1715,16 @@ def construct_F(Alist, MPO, Blist):
         DESCRIPTION.
 
     """
-    F = [initial_F(MPO[-1])]
+    if SYMMETRY_AVAILABLE and isinstance(Blist[-1], BlockTensor):
+        if target_qn is None:
+            # pick the unique right-bond qR from the last site tensor
+            # key = (qL, qR, qP) for site tensors in this code
+            qs = sorted({key[1] for key in Blist[-1].data.keys()})
+            if len(qs) != 1:
+                raise ValueError(f"Ambiguous total charge on last bond: {qs}. Pass target_qn explicitly.")
+            target_qn = qs[0]
 
+    F = [initial_F(MPO[-1], target_qn=target_qn if target_qn is not None else 0)]
     for i in range(len(MPO)-1, 0, -1):
         F.append(contract_from_right(MPO[i], Alist[i], F[-1], Blist[i]))
     return F
@@ -1194,7 +1902,7 @@ def optimize_site(A, W, E, F, tol=1E-8):
     return (E[0],np.reshape(V[:,0], H.req_shape))
 
 
-def optimize_two_sites(A, B, W1, W2, E, F, m, dir):
+def optimize_two_sites(A, B, W1, W2, E, F, m, dir, U1=False):
     """
     two-site optimization of MPS A,B with respect to MPO W1,W2 and
     environment tensors E,F
@@ -1233,21 +1941,73 @@ def optimize_two_sites(A, B, W1, W2, E, F, m, dir):
         DESCRIPTION.
 
     """
-    W = coarse_grain_MPO(W1,W2)
-    AA = coarse_grain_MPS(A,B)
-    H = HamiltonianMultiply(E,W,F)
-    E,V = sparse.linalg.eigsh(H,1,v0=AA,which='SA')
-    AA = np.reshape(V[:,0], H.req_shape)
-    A,S,B = fine_grain_MPS(AA, [A.shape[0], B.shape[0]])
-    A,S,B,trunc,m = truncate_SVD(A,S,B,m)
-    if (dir == 'right'):
-        B = np.einsum("ij,sjk->sik", np.diag(S), B)
-    else:
-        assert dir == 'left'
-        A = np.einsum("sij,jk->sik", A, np.diag(S))
-    return E[0], A, B, trunc, m
+    if U1:
+        if not SYMMETRY_AVAILABLE:
+            raise ImportError("Symmetry module not found. Cannot run U1=True.")
+            
+        # 1. Form Initial Guess (Bond Dimension expansion happens here naturally in SVD)
+        # A: (Bond_L, Bond_M, Phys_L)
+        # B: (Bond_M, Bond_R, Phys_R)
+        # AA = A * B -> (Bond_L, Phys_L, Bond_R, Phys_R)
+        # Note on A/B indices in BlockTensor:
+        # standard MPS layout: (Left, Right, Phys).
+        # Contraction: A[Right] -- B[Left]
+        
+        # Check rank to be sure
+        if A.rank == 3:
+            AA = tensordot(A, B, axes=([1], [0])) # this will return as BlockTensor Object
+            AA = AA.transpose(0, 2, 1, 3)
+            
+            # add noise to AA
+            # forces Davidson to explore new sectors
+            noise_scale = 1e-4
+            for k in AA.data:
+                # Add random noise to existing blocks
+                AA.data[k] += (np.random.rand(*AA.data[k].shape) - 0.5) * noise_scale
+        else:
+            raise ValueError(f"Unexpected tensor rank {A.rank} in symmetric opt")
 
-def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6):
+        # 2. Define Linear Operator
+        H_op = HamiltonianMultiplyU1(E, [W1, W2], F)
+        
+        # 3. Solve Eigenproblem (Davidson)
+        # Normalize guess
+        norm = AA.norm()
+        AA = AA * (1.0/norm)
+        
+        energy, AA_new = solve_davidson(H_op, AA, tol=1e-5)
+        
+        # 4. SVD and Split
+        # AA_new is (L, R, Phys_L, Phys_R)
+        # We need to return A(L, M, P_L) and B(M, R, P_R)
+        # Use our symmetric SVD
+        U, V, trunc, m_kept = svd_symmetric(AA_new, m_max=m)
+        
+        # U is (L, P_L, M). Transpose to (Bond_L, Bond_M, Phys_L)
+        A_new = U.transpose(0, 2, 1)
+        
+        # V output from svd_symmetric is (Bond_M, Bond_R, Phys_R), as wanted
+        B_new = V
+        
+        return energy, A_new, B_new, trunc, m_kept
+
+    else:
+        W = coarse_grain_MPO(W1,W2)
+        AA = coarse_grain_MPS(A,B)
+        H = HamiltonianMultiply(E,W,F)
+        E,V = sparse.linalg.eigsh(H,1,v0=AA,which='SA')
+        AA = np.reshape(V[:,0], H.req_shape)
+        A,S,B = fine_grain_MPS(AA, [A.shape[0], B.shape[0]])
+        A,S,B,trunc,m = truncate_SVD(A,S,B,m)
+        
+        if (dir == 'right'):
+            B = np.einsum("ij,sjk->sik", np.diag(S), B)
+        else:
+            assert dir == 'left'
+            A = np.einsum("sij,jk->sik", A, np.diag(S))
+        return E[0], A, B, trunc, m
+
+def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6, U1=False, target_qn = None):
     """
     Driver function to perform sweeps of 2-site DMRG
 
@@ -1271,55 +2031,50 @@ def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6):
     """
 
     E = construct_E(MPS, MPO, MPS)
-    F = construct_F(MPS, MPO, MPS)
+    F = construct_F(MPS, MPO, MPS, target_qn=target_qn)
     F.pop()
-
-    Eold = expect_mps(MPS, MPO, MPS)
-
+    
+    # Skip dense expectation check for U1 to avoid crash
+    Eold = 0.0 
     converged = False
 
     for sweep in range(0, int(sweeps/2)):
-
-        for i in range(0, len(MPS)-2): # forward
-            Energy,MPS[i],MPS[i+1],trunc,states = optimize_two_sites(MPS[i],MPS[i+1],
-                                                                     MPO[i],MPO[i+1],
-                                                                     E[-1], F[-1], m, 'right')
+        for i in range(0, len(MPS)-2): 
+            Energy, MPS[i], MPS[i+1], trunc, states = optimize_two_sites(
+                MPS[i], MPS[i+1], MPO[i], MPO[i+1], E[-1], F[-1], m, 'right', U1=U1
+            )
             print("Sweep {:} Sites {:},{:}    Energy {:16.12f}    States {:4} Truncation {:16.12f}"
                      .format(sweep*2,i,i+1, Energy, states, trunc))
 
             E.append(contract_from_left(MPO[i], MPS[i], E[-1], MPS[i]))
-            F.pop();
+            F.pop()
 
         if abs(Energy - Eold) < conv:
             print("DMRG Converged at sweep {}. \n Total energy = {}".format(sweep, Energy))
             converged = True
+            gauge = "Left"
             break
         else:
             Eold = Energy
 
-        for i in range(len(MPS)-2, 0, -1): # backward
-
-            Energy,MPS[i],MPS[i+1],trunc,states = optimize_two_sites(MPS[i],MPS[i+1],
-                                                                     MPO[i],MPO[i+1],
-                                                                     E[-1], F[-1], m, 'left')
-
+        for i in range(len(MPS)-2, 0, -1): 
+            Energy, MPS[i], MPS[i+1], trunc, states = optimize_two_sites(
+                MPS[i], MPS[i+1], MPO[i], MPO[i+1], E[-1], F[-1], m, 'left', U1=U1
+            )
             print("Sweep {} Sites {},{}    Energy {:16.12f}    States {:4} Truncation {:16.12f}"
-                     .format(sweep*2+1,i,i+1, Energy, states, trunc))
-
+                     .format(sweep*2+1, i, i+1, Energy, states, trunc))
             F.append(contract_from_right(MPO[i+1], MPS[i+1], F[-1], MPS[i+1]))
-            E.pop();
+            E.pop()
 
         if abs(Energy - Eold) < conv:
             print("DMRG Converged at sweep {}. \n Total energy = {}".format(sweep, Energy))
             converged = True
+            gauge = "Right"
             break
         else:
             Eold = Energy
 
-    if not converged:
-        print("DMRG not converged. Try increasing nsweep or a better initial guess.")
-
-    return Energy, MPS
+    return Energy, MPS, gauge
 
 
 def expect_mps(bra, MPO, ket=None):
@@ -1364,7 +2119,7 @@ class DMRG:
     """
     ground state finite DMRG in MPO/MPS framework
     """
-    def __init__(self, H, D, nsweeps=None, init_guess=None, opt='2site'):
+    def __init__(self, H, D, nsweeps=None, init_guess=None, opt='2site', U1 = False, target_qn = None):
         """
 
 
@@ -1393,8 +2148,10 @@ class DMRG:
         self.init_guess = init_guess
         self.mps = None
         self.e_tot = None
-
+        self.U1 = U1
+        self.target_qn = target_qn
         self.ground_state = None
+        self.ground_state_raw = None
 
 
     def run(self):
@@ -1402,13 +2159,26 @@ class DMRG:
         if self.init_guess is None:
             raise ValueError('Invalid initial guess.')
 
-        if self.opt == '1site':
+        if self.U1:
+            if isinstance(self.init_guess, list) and not isinstance(self.init_guess[0], BlockTensor):
+                self.init_guess = dense_to_symmetric(self.init_guess, phys_qns=None)
 
+            if self.target_qn is not None:
+                target_qn = int(self.target_qn)
+            else:
+                # otherwise infer from last-site right-bond charge
+                qs = sorted({key[1] for key in self.init_guess[-1].data.keys()})
+                if len(qs) != 1:
+                    raise ValueError(f"Ambiguous total charge on last bond: {qs}. Set DMRG(..., target_qn=...) explicitly.")
+                target_qn = qs[0]
+
+        if self.opt == '1site':
             fDMRG_1site_GS_OBC(self.H, self.D, self.nsweeps)
 
         else:
-            self.e_tot, self.ground_state = two_site_dmrg(self.init_guess, self.H, self.D, self.nsweeps)
-
+            self.e_tot, self.ground_state_raw, self.gauge = two_site_dmrg(
+                self.init_guess, self.H, self.D, self.nsweeps, U1=self.U1, target_qn=self.target_qn)
+            self.ground_state = MPS(self.ground_state_raw)
         return self
 
     def expect(self, e_ops):
@@ -1431,12 +2201,109 @@ class DMRG:
 
         return [expect(psi, e_op) for e_op in e_ops]
 
-    def make_rdm(self):
-        # \gamma_{ij} = < 0| c_j^\dagger c_i | 0 >
-        pass
+    def make_rdm(self, idx=None):
+        """
+        Calculate 1-site reduced density matrix of the ground state.
+        Wrapper for MPS.calc_1site_rdm
+        \gamma_{ij} = < 0| c_j^\dagger c_i | 0 >
+        """
+        if self.ground_state is None:
+            raise ValueError("Run DMRG first to generate a ground state.")
+            
+        return self.ground_state.calc_1site_rdm(idx)
 
-    def make_rdm2(self):
-        pass
+    def make_rdm2(self, idx_pairs=None):
+        """
+        Calculate 2-site reduced density matrix of the ground state.
+        Wrapper for MPS.calc_2site_rdm
+        """
+        if self.ground_state is None:
+            raise ValueError("Run DMRG first to generate a ground state.")
+            
+        return self.ground_state.calc_2site_rdm(idx_pairs)
+
+    def nelec_dmrg(self, idx=None, weights=None, return_local=False, normalize=True, atol=1e-10):
+        """
+        Return the total number of electrons deduced from the 1-site RDM(s).
+
+        Parameters
+        ----------
+        idx : None | int | list[int]
+            Which sites to include. None -> all sites.
+        weights : None | array-like
+            Local occupation eigenvalues for each physical basis state (dense case).
+            If None, uses common defaults:
+            d=2 -> [0,1]
+            d=4 -> [0,1,1,2]
+            For U(1) BlockTensor RDM, weights are taken from the block quantum number q.
+        return_local : bool
+            If True, also return a dict {i: <n_i>}.
+        normalize : bool
+            If True, divide by Tr(rho_i) when Tr deviates from 1 (robust against gauge / normalization issues).
+        atol : float
+            Tolerance for trace normalization check.
+
+        Returns
+        -------
+        float  or  (float, dict)
+            Total electron number, optionally with site-resolved occupations.
+        """
+        import numpy as np
+
+        rdm = self.make_rdm(idx)
+
+        local = {}
+        for i, rho in rdm.items():
+            # --- U(1) BlockTensor RDM path: use block labels q as particle number ---
+            if SYMMETRY_AVAILABLE and (BlockTensor is not None) and isinstance(rho, BlockTensor):
+                tr = 0.0 + 0.0j
+                n  = 0.0 + 0.0j
+                for (q_bra, q_ket), blk in rho.data.items():
+                    if q_bra == q_ket:
+                        t = np.trace(blk)
+                        tr += t
+                        n  += float(q_bra) * t
+
+                if normalize and abs(tr - 1.0) > atol and abs(tr) > atol:
+                    n = n / tr
+
+                local[i] = n
+                continue
+
+            # --- Dense ndarray RDM path ---
+            rho = np.asarray(rho)
+            d = rho.shape[0]
+            tr = np.trace(rho)
+
+            if weights is None:
+                if d == 2:
+                    w = np.array([0.0, 1.0], dtype=float)
+                elif d == 4:
+                    w = np.array([0.0, 1.0, 1.0, 2.0], dtype=float)
+                else:
+                    raise ValueError(
+                        f"nelec_dmrg: cannot infer occupation weights for local dim d={d}. "
+                        "Pass `weights=` explicitly."
+                    )
+            else:
+                w = np.asarray(weights, dtype=float)
+                if w.shape[0] != d:
+                    raise ValueError(f"nelec_dmrg: weights length {w.shape[0]} != local dim {d}.")
+
+            n = np.sum(w * np.real(np.diag(rho)))
+            if normalize and abs(tr - 1.0) > atol and abs(tr) > atol:
+                n = n / np.real(tr)
+
+            local[i] = n + 0.0j  # keep consistent type (will be real in practice)
+
+        total = np.real(np.sum(list(local.values()))).item()
+        if return_local:
+            # convert local to real python floats when possible
+            local_real = {i: np.real(v).item() for i, v in local.items()}
+            return total, local_real
+        return total
+
+
 
 def autoMPO(h1e, eri):
     """
@@ -1665,7 +2532,7 @@ if __name__ == '__main__':
     InitialA2 = np.zeros((d,1,1))
     InitialA2[1,0,0] = 1
 
-    MPS = [InitialA1, InitialA2] * int(N/2)
+    initial_mps = [InitialA1, InitialA2] * int(N/2)
 
     ## Local operators
     I = np.identity(2)
@@ -1696,7 +2563,7 @@ if __name__ == '__main__':
     H = MPO = [Wfirst] + ([W] * (N-2)) + [Wlast]
 
     dmrg = DMRG(H, D=10, nsweeps=8)
-    dmrg.init_guess = MPS
+    dmrg.init_guess = initial_mps
     dmrg.run()
 
     
