@@ -78,7 +78,7 @@ from scipy import sparse
 import logging
 from pyqed.mps.autompo.model import Model
 from pyqed.mps.autompo.Operator import Op
-from pyqed.mps.autompo.basis import BasisSHO, BasisHalfSpin
+from pyqed.mps.autompo.basis import BasisSHO, BasisHalfSpin, BasisSpin
 from pyqed.mps.autompo.light_automatic_mpo import Mpo
 from pyqed.mps.mps import DMRG as DMRG_Solver
 
