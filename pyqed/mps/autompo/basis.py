@@ -1105,6 +1105,98 @@ class BasisHalfSpin(BasisSet):
         return self.__class__(new_dof, self.sigmaqn)
 
 
+class BasisSpin(BasisSet):
+    r"""
+    A general basis set for a particle with Spin S. 
+    Dimension = 2S + 1.
+    
+    Parameters
+    ----------
+    dof : hashable
+        Degree of freedom name.
+    S : float or int
+        The spin quantum number (e.g., 1 for Spin-1, 0.5 for Spin-1/2).
+    """
+    
+    is_spin = True
+
+    def __init__(self, dof, S, sigmaqn: List = None):
+        self.S = float(S)
+        nbas = int(2 * S + 1)
+        if sigmaqn is None:
+            # Default quantum numbers usually not needed for simple spin, 
+            # but can be placeholders
+            sigmaqn = [0] * nbas
+            
+        super().__init__(dof, nbas, sigmaqn)
+
+    def op_mat(self, op: Union[Op, str]):
+        if not isinstance(op, Op):
+            op = Op(op, None)
+        op_symbol, op_factor = op.split_symbol, op.factor
+
+        # Helper to generate diagonal m values: S, S-1, ..., -S
+        m_vals = np.linspace(self.S, -self.S, self.nbas)
+
+        if len(op_symbol) == 1:
+            sym = op_symbol[0]
+            mat = np.zeros((self.nbas, self.nbas), dtype=complex)
+
+            if sym == "I":
+                mat = np.eye(self.nbas)
+            
+            elif sym in ["sigma_z", "Z", "z", "Sz"]:
+                # S_z |m> = m |m>
+                mat = np.diag(m_vals)
+            
+            elif sym in ["sigma_+", "+", "Sp", "S+"]:
+                # S_+ |m> = sqrt(S(S+1) - m(m+1)) |m+1>
+                # Matrix element is <m+1 | S_+ | m>
+                # In matrix indexing: row i corresponds to m' = S - i
+                # We want m' = m + 1. 
+                # This connects column j (state m) to row j-1 (state m+1)
+                for i in range(1, self.nbas):
+                    m = m_vals[i] # This is the 'from' state
+                    val = np.sqrt(self.S*(self.S+1) - m*(m+1))
+                    mat[i-1, i] = val
+
+            elif sym in ["sigma_-", "-", "Sm", "S-"]:
+                # S_- |m> = sqrt(S(S+1) - m(m-1)) |m-1>
+                # Connects column j (state m) to row j+1 (state m-1)
+                for i in range(self.nbas - 1):
+                    m = m_vals[i]
+                    val = np.sqrt(self.S*(self.S+1) - m*(m-1))
+                    mat[i+1, i] = val
+
+            elif sym in ["sigma_x", "X", "x", "Sx"]:
+                # Sx = (S+ + S-) / 2
+                mat_p = self.op_mat("S+")
+                mat_m = self.op_mat("S-")
+                mat = 0.5 * (mat_p + mat_m)
+
+            elif sym in ["sigma_y", "Y", "y", "Sy"]:
+                # Sy = (S+ - S-) / 2i
+                mat_p = self.op_mat("S+")
+                mat_m = self.op_mat("S-")
+                mat = (mat_p - mat_m) / 2.0j
+                
+            elif sym in ["isigma_y", "iY", "iy"]:
+                 mat = (1j * self.op_mat("Y")).real
+
+            else:
+                raise ValueError(f"op_symbol:{sym} is not supported for BasisSpin")
+        else:
+            # Handle product operators like "Sx Sz"
+            mat = np.eye(self.nbas, dtype=complex)
+            for o in op_symbol:
+                mat = mat @ self.op_mat(o)
+
+        return mat * op_factor
+
+    def copy(self, new_dof):
+        return self.__class__(new_dof, self.S, self.sigmaqn)
+
+
 class BasisDummy(BasisSet):
     def __init__(self, dof, nbas=1, sigmaqn:List=None):
         if sigmaqn is None:

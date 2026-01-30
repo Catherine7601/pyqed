@@ -85,6 +85,7 @@ def svd_symmetric(AA, cutoff=1e-10, m_max=None):
 
     AA_perm = AA.transpose(0, 2, 1, 3)
 
+    # blocks_by_q_mid is used to combine different (q_L, q_phys_L) pair that actually share same q_tot_L, which would belong to same sub-block after svd
     blocks_by_q_mid = {}
     row_map = {}
     col_map = {}
@@ -2007,7 +2008,7 @@ def optimize_two_sites(A, B, W1, W2, E, F, m, dir, U1=False):
             A = np.einsum("sij,jk->sik", A, np.diag(S))
         return E[0], A, B, trunc, m
 
-def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6, U1=False, target_qn = None):
+def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6, U1=False, target_qn = None, not_conv_err = True):
     """
     Driver function to perform sweeps of 2-site DMRG
 
@@ -2037,7 +2038,7 @@ def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6, U1=False, target_qn = None)
     # Skip dense expectation check for U1 to avoid crash
     Eold = 0.0 
     converged = False
-
+    gauge = None
     for sweep in range(0, int(sweeps/2)):
         for i in range(0, len(MPS)-2): 
             Energy, MPS[i], MPS[i+1], trunc, states = optimize_two_sites(
@@ -2073,6 +2074,14 @@ def two_site_dmrg(MPS, MPO, m, sweeps=50, conv=1e-6, U1=False, target_qn = None)
             break
         else:
             Eold = Energy
+    if not_conv_err == True:
+        if converged == False:
+            raise ValueError("DMRG did not converge within the given number of sweeps, if you wish to disable this error, set not_conv_err = False. or you should increase the number of sweeps.")
+    if not_conv_err == False:
+        if converged == False:
+            print("DMRG did not converge within the given number of sweeps, returning the last result.")
+    if gauge == None:
+        gauge = "Right"
 
     return Energy, MPS, gauge
 
@@ -2119,7 +2128,7 @@ class DMRG:
     """
     ground state finite DMRG in MPO/MPS framework
     """
-    def __init__(self, H, D, nsweeps=None, init_guess=None, opt='2site', U1 = False, target_qn = None):
+    def __init__(self, H, D, nsweeps=None, init_guess=None, opt='2site', U1 = False, target_qn = None, not_conv_err = True):
         """
 
 
@@ -2152,6 +2161,7 @@ class DMRG:
         self.target_qn = target_qn
         self.ground_state = None
         self.ground_state_raw = None
+        self.not_conv_err = not_conv_err
 
 
     def run(self):
@@ -2177,7 +2187,7 @@ class DMRG:
 
         else:
             self.e_tot, self.ground_state_raw, self.gauge = two_site_dmrg(
-                self.init_guess, self.H, self.D, self.nsweeps, U1=self.U1, target_qn=self.target_qn)
+                self.init_guess, self.H, self.D, self.nsweeps, U1=self.U1, target_qn=self.target_qn, not_conv_err = self.not_conv_err)
             self.ground_state = MPS(self.ground_state_raw)
         return self
 
