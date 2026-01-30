@@ -201,7 +201,7 @@ def calculate_overlap_with_hf_robust(mps_tensors, C_mo_spatial, occupied_indices
 
 # helpers for saving wavefunction data at checkpoints
 def save_checkpoint(stage_name, d_stack, mps_tensors, energy_dict, mol, params):
-    folder = "Checkpoints"
+    folder = "Checkpoints_withou_U1"
     os.makedirs(folder, exist_ok=True)
     filename = f"{folder}/{stage_name}"
     print(f"  [Save] Creating Checkpoint: {filename} ...")
@@ -416,17 +416,24 @@ def run_gdvr_dmrg_loop(
 if __name__ == "__main__":
     charges = [1.0, 1.0, 1.0, 1.0]
     coords = [[0.0, 0.0, 0.91], [0.0, 0.0, -0.91], [0.0, 0.0, -3.6], [0.0, 0.0, 3.6]]
+    mol = Molecule(charges, coords, nelec=4)
+
+    # charges = [1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0, 1.0]
+    # coords = [[0.0, 0.0, -2], [0.0, 0.0, -6], [0.0, 0.0, -10], [0.0, 0.0, -14], [0.0, 0.0, 2], [0.0, 0.0, 6], [0.0, 0.0, 10], [0.0, 0.0, 14]]
+    # mol = Molecule(charges, coords, nelec=8)
+    
     # coords = [[0.0, 2, 2], [0.0, 2, -2], [0.0, -2, -2], [0.0, -2, 2]]
     # coords = [[0.0, 0.7, 0.7], [0.0, 0.7, -0.7], [0.0, -0.7, -0.7], [0.0, -0.7, 0.7]]
-    mol = Molecule(charges, coords, nelec=4)
+    # mol = Molecule(charges, coords, nelec=4)
+    
     S_EXPS = [18.73113696, 2.825394365, 0.6401216923, 0.1612777588]
     basis_cfg = {'s': S_EXPS}
     
     run_gdvr_dmrg_loop(
-        mol, Lz=8.0, Nz=32, basis_cfg=basis_cfg,
+        mol, Lz=8.0, Nz=80, basis_cfg=basis_cfg,
         pre_opt_cycles=10,    
         dmrg_cycles=4,         
-        dmrg_bond_dim=20,
+        dmrg_bond_dim=40,
         dmrg_sweeps=10,
         post_dmrg_opt_cycles=10 
     )

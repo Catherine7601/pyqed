@@ -285,7 +285,7 @@ class SBM:
     # def to_wilson_chain(self):
     #     pass
 
-    def DMRG(self, nb=6, D=20, nsweeps=4):
+    def DMRG(self, nb=6, D=20, nsweeps=50):
         """
         Constructs the MPO for the Spin-Boson Model and initializes the DMRG solver.
         """
@@ -357,7 +357,7 @@ class SBM:
             init_mps.append(A_boson)
 
         # 6. Return DMRG Object
-        dmrg_obj = DMRG_Solver(H=mpo_fixed, D=D, nsweeps=nsweeps, init_guess=init_mps, U1= False)
+        dmrg_obj = DMRG_Solver(H=mpo_fixed, D=D, nsweeps=nsweeps, init_guess=init_mps, U1= False, not_conv_err = True)
         
         return dmrg_obj
 
@@ -620,7 +620,7 @@ if __name__=='__main__':
     nrg = SBM(H, s=0.8, L=2., alpha=0.05, omegac=1, epsilon = epsilon, delta = Delta)
 
     eps, t = nrg.discretize(N=20)
-    nrg_dmrg = nrg.DMRG(nb=nb, D=20, nsweeps=4)  # this will return an object under DMRG class, nb defines local bosonic dimension, D defines maximum bond dimension, nsweep defines maximum dmrg scan rounds
+    nrg_dmrg = nrg.DMRG(nb=nb, D=20)  # this will return an object under DMRG class, nb defines local bosonic dimension, D defines maximum bond dimension, nsweep defines maximum dmrg scan rounds, default dmrg sweep number is 50.
 
     nrg_dmrg.run() # this will perform dmrg scan, and have its ground state stored in nrg_dmrg.ground_state as a MPS object
 
