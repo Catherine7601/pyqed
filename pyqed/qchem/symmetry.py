@@ -12,7 +12,12 @@ Abelian groups also cover the common linear-molecule subgroup workflow, e.g. tre
 The ``Coov`` and ``Dooh`` entries follow PySCF's cylindrical-label convention:
 the actual AO operations descend to ``C2v`` or ``D2h``, while orbital labels
 carry the additional axial angular-momentum tag, e.g. ``E1x``/``E1y`` and
-``E2x``/``E2y``.
+``E2x``/``E2y`` and ``E3x``/``E3y`` for real-spherical f shells.
+The linear decomposition supports real-spherical s/p/d/f (Cartesian s/p
+are equivalent); unsupported components raise instead of being omitted.
+It adapts PySCF's cylindrical-label convention with subgroup projectors and
+overlap-metric orthonormalization, rather than reproducing its implementation:
+https://pyscf.org/_modules/pyscf/symm/basis.html .
 """
 
 from __future__ import annotations
@@ -746,10 +751,17 @@ def _component_parity(component: str, signs: tuple[int, int, int]) -> int:
     return int(value)
 
 
-def _linear_component_momentum(component: str) -> tuple[int, str | None] | None:
+def _linear_component_momentum(
+    component: str, *, shell: str = ""
+) -> tuple[int, str | None] | None:
     """Return ``(|m|, 'x'/'y')`` for supported real cylindrical AO components."""
 
     component = str(component)
+    if shell.lower().endswith("f") and component in {
+        "m-3", "m-2", "m-1", "m0", "m+1", "m+2", "m+3"
+    }:
+        signed_m = int(component[1:])
+        return abs(signed_m), None if signed_m == 0 else ("x" if signed_m > 0 else "y")
     if component in ("", "z", "z2"):
         return 0, None
     if component in ("x", "xz"):
@@ -763,8 +775,8 @@ def _linear_component_momentum(component: str) -> tuple[int, str | None] | None:
     return None
 
 
-def _linear_component_label(groupname: str, component: str) -> str | None:
-    resolved = _linear_component_momentum(component)
+def _linear_component_label(groupname: str, component: str, *, shell: str = "") -> str | None:
+    resolved = _linear_component_momentum(component, shell=shell)
     if resolved is None:
         return None
     order, xy = resolved
@@ -827,6 +839,16 @@ def _build_linear_symm_orb(
 ) -> dict[str, np.ndarray]:
     labels = tuple(mol.ao_labels())
     parsed = [parse_ao_label(label) for label in labels]
+    momenta = [
+        _linear_component_momentum(str(entry["component"]), shell=str(entry["shell"]))
+        for entry in parsed
+    ]
+    for label, momentum in zip(labels, momenta):
+        if momentum is None:
+            raise NotImplementedError(
+                f"AO {label!r} has no supported cylindrical angular-momentum tag. "
+                f"{group.name} requires real-spherical s/p/d/f components."
+            )
     overlap = np.asarray(mol.overlap, dtype=float)
     eye = (np.eye(len(labels)) if axes is None else
            _rotating_ao_representation(mol, axes, tol, atom_perm=np.arange(mol.natom)))
@@ -834,21 +856,14 @@ def _build_linear_symm_orb(
 
     for base_id, base_label in enumerate(base_group.irrep_names):
         projector = base_projectors[base_label]
-        for order, xy in sorted(
-            {
-                item
-                for entry in parsed
-                for item in [_linear_component_momentum(str(entry["component"]))]
-                if item is not None
-            }
-        ):
+        for order, xy in sorted(set(momenta)):
             linear_id = _linear_id_from_base_component(group.name, base_id, order, xy)
             if linear_id is None:
                 continue
             indices = [
                 idx
-                for idx, entry in enumerate(parsed)
-                if _linear_component_momentum(str(entry["component"])) == (order, xy)
+                for idx, momentum in enumerate(momenta)
+                if momentum == (order, xy)
             ]
             if not indices:
                 continue
@@ -864,14 +879,18 @@ def _build_linear_symm_orb(
     }
 
 
-def _linear_ao_irrep_labels(mol, groupname: str) -> tuple[tuple[str | None, ...], tuple[int | None, ...]]:
+def _linear_ao_irrep_labels(mol, groupname: str, base_ao_ids) -> tuple[tuple[str | None, ...], tuple[int | None, ...]]:
     labels = []
     ids = []
-    for label in mol.ao_labels():
-        component = str(parse_ao_label(label)["component"])
-        linear_label = _linear_component_label(groupname, component)
-        labels.append(linear_label)
-        ids.append(None if linear_label is None else linear_irrep_symb2id(groupname, linear_label))
+    for label, base_id in zip(mol.ao_labels(), base_ao_ids):
+        entry = parse_ao_label(label)
+        momentum = _linear_component_momentum(
+            str(entry["component"]), shell=str(entry["shell"]))
+        # Inversion-exchanged AOs have no individual g/u label.
+        linear_id = (None if base_id is None or momentum is None
+                     else _linear_id_from_base_component(groupname, base_id, *momentum))
+        labels.append(None if linear_id is None else linear_irrep_id2symb(groupname, linear_id))
+        ids.append(linear_id)
     return tuple(labels), tuple(ids)
 
 
@@ -1140,7 +1159,7 @@ def build_molecular_symmetry(
             tol=subspace_tol,
             axes=axes,
         )
-        ao_labels, ao_ids = _linear_ao_irrep_labels(mol, point_group.name)
+        ao_labels, ao_ids = _linear_ao_irrep_labels(mol, point_group.name, base_ao_ids)
         if not np.allclose(axes, np.eye(3)):
             ao_labels, ao_ids = (None,) * mol.nao, (None,) * mol.nao
     else:
